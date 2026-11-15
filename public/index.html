@@ -60,16 +60,17 @@
   .num { text-align:right !important; font-variant-numeric:tabular-nums; }
   .card { position:absolute; z-index:10; background:rgba(24,27,34,.97); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
   /* Plane panel: floats under the selected plane, frosted glass. */
-  #detail { position:absolute; z-index:10; display:none; width:min(290px, calc(100% - 20px)); max-height:min(46%, 330px); overflow:auto;
-    left:10px; top:10px; padding:12px 14px 10px; border-radius:16px;
-    background:rgba(16,18,24,.32); border:1px solid rgba(255,255,255,.16);
-    -webkit-backdrop-filter:blur(26px) saturate(1.5); backdrop-filter:blur(26px) saturate(1.5);
-    box-shadow:0 10px 30px rgba(0,0,0,.35); text-shadow:0 1px 2px rgba(0,0,0,.45); transition:opacity .15s; }
-  #detail::before { content:""; position:absolute; top:-7px; left:var(--arrow-x, 50%); width:12px; height:12px; transform:translateX(-50%) rotate(45deg);
-    background:inherit; border-left:1px solid rgba(255,255,255,.16); border-top:1px solid rgba(255,255,255,.16); display:var(--arrow, block); }
+  #detail { position:absolute; z-index:10; display:none; left:8px; right:8px; bottom:calc(8px + env(safe-area-inset-bottom)); max-width:640px; margin:0 auto;
+    max-height:48%; overflow:auto; padding:12px 14px 10px; border-radius:18px;
+    background:rgba(16,18,24,.30); border:1px solid rgba(255,255,255,.16);
+    -webkit-backdrop-filter:blur(28px) saturate(1.5); backdrop-filter:blur(28px) saturate(1.5);
+    box-shadow:0 10px 30px rgba(0,0,0,.35); text-shadow:0 1px 2px rgba(0,0,0,.45); }
+  body.focus #views, body.focus #legend, body.focus #maptools, body.focus #hud, body.focus #msg { display:none !important; }
+  body.focus .cesium-viewer-bottom { opacity:.35; }
   #detail h2 { margin:0 0 1px; font-size:17px; padding-right:30px; letter-spacing:.2px; }
   #detail .sub { color:#c9cfdb; font-size:12.5px; margin-bottom:8px; }
-  #detail dl { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; margin:0; font-size:12.5px; }
+  #detail dl { display:grid; grid-template-columns:auto 1fr auto 1fr; gap:3px 12px; margin:0; font-size:13px; }
+  @media (max-width: 420px) { #detail dl { grid-template-columns:auto 1fr; } }
   #detail dt { color:#aab2c2; } #detail dd { margin:0; font-variant-numeric:tabular-nums; } #detail a { color:#ffc24d; }
   #detail .close { background:rgba(255,255,255,.12); border-color:rgba(255,255,255,.18); }
   #orbitBtn[aria-pressed="true"] { background:rgba(255,176,32,.85); color:#1a1300; border-color:transparent; text-shadow:none; }
@@ -692,11 +693,12 @@ const AircraftModels = (() => {
     e.ent.model.silhouetteSize = sel ? 3 : 1.2;
     e.ent.model.minimumPixelSize = sel ? 60 : 44;
     e.ent.label.text = t.code ? `${p.callsign} · ${t.code}` : p.callsign;
+    e.ent.label.show = !state.selected; // panel open: no map labels
     e.trail.polyline.material = col.withAlpha(sel ? 0.9 : 0.45);
   }
   function removeEntity(id) {
     const e = state.entities.get(id); if (!e) return;
-    if (viewer.trackedEntity === e.ent) stopFollow();
+    if (focus && focus.id === id) stopFollow();
     viewer.entities.remove(e.ent); viewer.entities.remove(e.trail); state.entities.delete(id);
   }
 
@@ -808,61 +810,108 @@ const AircraftModels = (() => {
       const ent = state.entities.get(id)?.ent; if (ent && viewer.selectedEntity !== ent) viewer.selectedEntity = ent; // so tapping empty map deselects
       if (!personOn && id !== prev) zoomToPlane(id);
     }
-    else if (isFollowing() || flyingToPlane) stopFollow();
+    else if (focus) stopFollow();
     renderList(); renderDetail();
   }
-  // Fly in just behind and above the plane, then keep following it.
-  let flyingToPlane = false;
-  function zoomToPlane(id) {
-    const e = state.entities.get(id), p = state.planes.get(id); if (!e || !p) return;
-    exitSky(); viewer.trackedEntity = undefined; camera.lookAtTransform(C.Matrix4.IDENTITY);
-    const h = C.Math.toRadians(p.heading || 0), pitch = C.Math.toRadians(-12), range = Math.max(p.typeInfo.L * 2.6, 40);
-    e.ent.viewFrom = new C.Cartesian3(-Math.sin(h) * range * Math.cos(pitch), -Math.cos(h) * range * Math.cos(pitch), range * Math.sin(-pitch));
-    flyingToPlane = true;
-    viewer.flyTo(e.ent, { duration: 1.4, offset: new C.HeadingPitchRange(h, pitch, range) }).then(ok => {
-      flyingToPlane = false;
-      if (ok && state.selected === id && state.entities.get(id) === e) viewer.trackedEntity = e.ent;
-    });
+  // ---------- Plane focus: we drive the camera ourselves so the plane sits halfway between the top of the
+  // map and the top of the panel, sized to fit, with a slow orbit. Drag/pinch/twist move around the plane. ----------
+  let focus = null; // { id, h, p, rMul, tween: {t0, dur, from:{h,p,r,look}} }
+  const focusHandler = new C.ScreenSpaceEventHandler(scene.canvas);
+  const focusCart = new C.Cartesian3();
+  function focusTargetY() { // canvas px where the plane should sit
+    const el = $("detail"), H = scene.canvas.clientHeight;
+    const panelTop = el.style.display === "none" ? H : el.offsetTop;
+    return Math.max(40, panelTop / 2);
   }
+  function fitRange(p) {
+    const fr = camera.frustum, W = scene.canvas.clientWidth, H = scene.canvas.clientHeight;
+    const fovy = fr.fovy, fovx = 2 * Math.atan(Math.tan(fovy / 2) * (W / H));
+    const size = Math.max(p.typeInfo.L, p.typeInfo.b);                      // fits nose-on and side-on as it orbits
+    const usableH = (focusTargetY() * 2) / H;                                 // fraction of the screen above the panel
+    const rW = size / (0.8 * 2 * Math.tan(fovx / 2));
+    const rH = (size * 0.55) / (0.85 * usableH * 2 * Math.tan(fovy / 2));
+    return Math.max(rW, rH, 25);
+  }
+  function lookDownAngle() { // tilt the view down so the plane appears at focusTargetY instead of screen center
+    const H = scene.canvas.clientHeight, f = focusTargetY() / H;
+    return Math.atan((0.5 - f) * 2 * Math.tan(camera.frustum.fovy / 2));
+  }
+  function setFocusCamera(pos, h, p, r, lookFrac) {
+    camera.lookAtTransform(C.Transforms.eastNorthUpToFixedFrame(pos), new C.HeadingPitchRange(h, p, r));
+    camera.lookDown(lookDownAngle() * lookFrac);
+  }
+  function zoomToPlane(id) {
+    const e = state.entities.get(id), pl = state.planes.get(id); if (!e || !pl) return;
+    exitSky(); viewer.trackedEntity = undefined;
+    const pos = e.ent.position.getValue(viewer.clock.currentTime, focusCart); if (!pos) return;
+    // Where the camera is now, relative to the plane, so the fly-in starts from here.
+    const camW = C.Cartesian3.clone(camera.positionWC);
+    camera.lookAtTransform(C.Matrix4.IDENTITY);
+    const inv = C.Matrix4.inverseTransformation(C.Transforms.eastNorthUpToFixedFrame(pos), new C.Matrix4());
+    const v = C.Matrix4.multiplyByPoint(inv, camW, new C.Cartesian3()), r0 = C.Cartesian3.magnitude(v);
+    const from = { h: Math.atan2(-v.x, -v.y), p: Math.asin(C.Math.clamp(-v.z / r0, -1, 1)), r: r0, look: 0 };
+    focus = { id, h: C.Math.toRadians(pl.heading || 0), p: C.Math.toRadians(-10), rMul: 1, tween: { t0: performance.now(), dur: 1500, from } };
+    ctrl.enableInputs = false; // our own gestures below
+    document.body.classList.add("focus");
+  }
+  function endFocus() {
+    if (!focus) return;
+    focus = null; ctrl.enableInputs = true; document.body.classList.remove("focus");
+  }
+  const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  scene.preRender.addEventListener(() => {
+    if (!focus) return;
+    const e = state.entities.get(focus.id), pl = state.planes.get(focus.id);
+    const pos = e && e.ent.position.getValue(viewer.clock.currentTime, focusCart);
+    if (!pos || !pl) return;
+    const r = fitRange(pl) * focus.rMul;
+    const tw = focus.tween;
+    if (tw) {
+      const t = Math.min(1, (performance.now() - tw.t0) / tw.dur), k = ease(t);
+      let dh = focus.h - tw.from.h; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+      const rr = Math.exp(Math.log(tw.from.r) + (Math.log(r) - Math.log(tw.from.r)) * k); // smooth from far away
+      setFocusCamera(pos, tw.from.h + dh * k, tw.from.p + (focus.p - tw.from.p) * k, rr, k);
+      if (t >= 1) focus.tween = null;
+    } else setFocusCamera(pos, focus.h, focus.p, r, 1);
+  });
+  // Gestures while focused: drag orbits/tilts, pinch or scroll zooms, two-finger twist orbits.
+  let fDrag = null;
+  focusHandler.setInputAction(m => { if (focus) fDrag = C.Cartesian2.clone(m.position); }, C.ScreenSpaceEventType.LEFT_DOWN);
+  focusHandler.setInputAction(() => { fDrag = null; }, C.ScreenSpaceEventType.LEFT_UP);
+  focusHandler.setInputAction(m => {
+    if (!focus || !fDrag || focus.tween) return;
+    const dx = m.endPosition.x - fDrag.x, dy = m.endPosition.y - fDrag.y;
+    focus.h -= dx * 0.008;
+    focus.p = C.Math.clamp(focus.p + dy * 0.006, C.Math.toRadians(-85), C.Math.toRadians(35));
+    fDrag = C.Cartesian2.clone(m.endPosition);
+  }, C.ScreenSpaceEventType.MOUSE_MOVE);
+  focusHandler.setInputAction(d => { if (focus) focus.rMul = C.Math.clamp(focus.rMul * (d > 0 ? 0.9 : 1.1), 0.35, 25); }, C.ScreenSpaceEventType.WHEEL);
+  focusHandler.setInputAction(() => { fDrag = null; }, C.ScreenSpaceEventType.PINCH_START);
+  focusHandler.setInputAction(m => {
+    if (!focus) return;
+    const s0 = m.distance.startPosition.y, s1 = m.distance.endPosition.y;
+    if (s0 > 0 && s1 > 0) focus.rMul = C.Math.clamp(focus.rMul * (s0 / s1), 0.35, 25);
+    const a = m.angleAndHeight; if (a) { let dA = a.endPosition.x - a.startPosition.x; dA = Math.atan2(Math.sin(dA), Math.cos(dA)); focus.h -= dA; }
+  }, C.ScreenSpaceEventType.PINCH_MOVE);
+
   viewer.selectedEntityChanged.addEventListener(ent => {
     const id = ent && String(ent.id).replace(/-trail$/, "");
     if (id && state.planes.has(id)) select(id);
     else if (!ent && state.selected) select(null); // tapped empty map: back to your view
   });
 
-  // Slow continuous orbit around the followed plane. Touching the map pauses it; it resumes after a few seconds.
+  // Slow continuous orbit around the focused plane. Touching the map pauses it; it resumes after a few seconds.
   let orbitOn = store.get("orbit", true), orbitPausedUntil = 0, lastOrbitT = performance.now();
   const ORBIT_DEG_PER_SEC = 10; // one lap ≈ 36 s
   scene.preRender.addEventListener(() => {
     const now = performance.now(), dt = Math.min((now - lastOrbitT) / 1000, 0.1); lastOrbitT = now;
-    if (orbitOn && viewer.trackedEntity && !flyingToPlane && now > orbitPausedUntil) camera.rotateRight(C.Math.toRadians(ORBIT_DEG_PER_SEC * dt));
+    if (orbitOn && focus && !focus.tween && now > orbitPausedUntil) focus.h -= C.Math.toRadians(ORBIT_DEG_PER_SEC * dt);
   });
   const pauseOrbit = () => { orbitPausedUntil = performance.now() + 5000; };
   for (const ev of ["pointerdown", "wheel", "touchstart"]) scene.canvas.addEventListener(ev, pauseOrbit, { passive: true });
   function setOrbit(on) { orbitOn = on; store.set("orbit", on); $("orbitBtn").setAttribute("aria-pressed", String(on)); orbitPausedUntil = 0; }
   $("orbitBtn").addEventListener("click", () => setOrbit(!orbitOn));
   $("orbitBtn").setAttribute("aria-pressed", String(orbitOn));
-
-  // Keep the panel just under the selected plane on screen.
-  const tmpWin = new C.Cartesian2();
-  scene.postRender.addEventListener(() => {
-    const el = $("detail"); if (!state.selected || el.style.display === "none") return;
-    const e = state.entities.get(state.selected); const pos = e && e.ent.position.getValue(viewer.clock.currentTime);
-    const win = pos && scene.cartesianToCanvasCoordinates(pos, tmpWin);
-    const W = scene.canvas.clientWidth, H = scene.canvas.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
-    if (win && win.x > -40 && win.x < W + 40 && win.y > -40 && win.y < H + 40) {
-      const below = isFollowing() || flyingToPlane ? 70 : 34; // clear the model when we're close
-      const left = C.Math.clamp(win.x - w / 2, 8, W - w - 8);
-      const top = C.Math.clamp(win.y + below, 8, H - h - 8);
-      // Ignore sub-2px wobble so the panel sits still while following.
-      const L0 = parseFloat(el.style.left) || 0, T0 = parseFloat(el.style.top) || 0;
-      if (Math.abs(left - L0) > 2 || Math.abs(top - T0) > 2) { el.style.left = Math.round(left) + "px"; el.style.top = Math.round(top) + "px"; }
-      el.style.setProperty("--arrow-x", C.Math.clamp(win.x - left, 18, w - 18) + "px");
-      el.style.setProperty("--arrow", top >= win.y + 10 ? "block" : "none");
-    } else { // plane off screen: dock at the bottom
-      el.style.left = Math.max(8, (W - w) / 2) + "px"; el.style.top = (H - h - 54) + "px"; el.style.setProperty("--arrow", "none");
-    }
-  });
 
   function renderDetail() {
     const p = state.planes.get(state.selected);
@@ -928,7 +977,7 @@ const AircraftModels = (() => {
     if (view !== "person" && personOn) stopPerson();
     state.view = view;
     document.querySelectorAll("#views button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
-    if (isFollowing()) { viewer.trackedEntity = undefined; renderDetail(); }
+    if (focus) endFocus();
     camera.lookAtTransform(C.Matrix4.IDENTITY);
     if (view === "person") return enterPerson(duration);
     exitSky();
@@ -967,7 +1016,7 @@ const AircraftModels = (() => {
   panHandler.setInputAction(() => { panStart = null; }, C.ScreenSpaceEventType.PINCH_START); // two fingers: rotate/zoom, not pan
   // Two-finger twist rotates (like a map app); sliding both fingers up/down tilts. Pinch distance still zooms (Cesium).
   function twist(dAngle, dHeightPx) {
-    if (skyOn || C.Matrix4.equals(camera.transform, C.Matrix4.IDENTITY)) return;
+    if (focus || skyOn || C.Matrix4.equals(camera.transform, C.Matrix4.IDENTITY)) return;
     const center = C.Matrix4.getTranslation(camera.transform, new C.Cartesian3());
     const range = C.Cartesian3.distance(camera.positionWC, center);
     const heading = camera.heading - dAngle;
@@ -1184,8 +1233,8 @@ const AircraftModels = (() => {
   if (store.get("full", false)) setFull(true);
 
   // Follow a plane (camera orbits the plane instead of you). Stopping returns to your view.
-  const isFollowing = () => !!viewer.trackedEntity;
-  function stopFollow() { viewer.trackedEntity = undefined; goView(state.view === "person" ? "overview" : state.view, 1.2); }
+  const isFollowing = () => !!focus;
+  function stopFollow() { endFocus(); goView(state.view === "person" ? "overview" : state.view, 1.2); }
 
 
   // ---------- You: marker, ring, terrain-aware pivot ----------
