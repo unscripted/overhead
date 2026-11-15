@@ -59,12 +59,25 @@
   #list tbody tr { cursor:pointer; } #list tr.sel td { background:#2a2414; }
   .num { text-align:right !important; font-variant-numeric:tabular-nums; }
   .card { position:absolute; z-index:10; background:rgba(24,27,34,.97); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
-  #detail { left:12px; right:66px; bottom:12px; max-width:400px; display:none; max-height:calc(100% - 24px); overflow:auto; }
-  #detail h2 { margin:0 0 2px; font-size:18px; padding-right:30px; }
-  #detail .sub { color:var(--muted); font-size:13px; margin-bottom:8px; }
-  #detail img { width:100%; max-height:150px; object-fit:cover; border-radius:8px; margin-bottom:8px; display:block; background:#222; }
-  #detail dl { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; margin:0 0 8px; font-size:13px; }
-  #detail dt { color:var(--muted); } #detail dd { margin:0; } #detail a { color:var(--accent); }
+  /* Plane panel: floats under the selected plane, frosted glass. */
+  #detail { position:absolute; z-index:10; display:none; width:min(290px, calc(100% - 20px)); max-height:min(46%, 330px); overflow:auto;
+    left:10px; top:10px; padding:12px 14px 10px; border-radius:16px;
+    background:rgba(16,18,24,.32); border:1px solid rgba(255,255,255,.16);
+    -webkit-backdrop-filter:blur(26px) saturate(1.5); backdrop-filter:blur(26px) saturate(1.5);
+    box-shadow:0 10px 30px rgba(0,0,0,.35); text-shadow:0 1px 2px rgba(0,0,0,.45); transition:opacity .15s; }
+  #detail::before { content:""; position:absolute; top:-7px; left:var(--arrow-x, 50%); width:12px; height:12px; transform:translateX(-50%) rotate(45deg);
+    background:inherit; border-left:1px solid rgba(255,255,255,.16); border-top:1px solid rgba(255,255,255,.16); display:var(--arrow, block); }
+  #detail h2 { margin:0 0 1px; font-size:17px; padding-right:30px; letter-spacing:.2px; }
+  #detail .sub { color:#c9cfdb; font-size:12.5px; margin-bottom:8px; }
+  #detail dl { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; margin:0; font-size:12.5px; }
+  #detail dt { color:#aab2c2; } #detail dd { margin:0; font-variant-numeric:tabular-nums; } #detail a { color:#ffc24d; }
+  #detail .close { background:rgba(255,255,255,.12); border-color:rgba(255,255,255,.18); }
+  #orbitBtn[aria-pressed="true"] { background:rgba(255,176,32,.85); color:#1a1300; border-color:transparent; text-shadow:none; }
+  #detail h2 { padding-right:74px; }
+  #detail .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:0 0 8px; }
+  #detail .stat { background:rgba(255,255,255,.08); border-radius:10px; padding:5px 7px; }
+  #detail .stat b { display:block; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; }
+  #detail .stat span { font-size:10.5px; color:#aab2c2; text-transform:uppercase; letter-spacing:.4px; }
   .close { position:absolute; top:8px; right:8px; padding:2px 8px; }
   #settings { top:10px; left:10px; right:10px; max-width:420px; display:none; }
   #settings h2 { margin:0 0 8px; font-size:16px; }
@@ -136,13 +149,12 @@
     <div id="hud" aria-live="polite"></div>
     <div id="msg" role="alert"></div>
 
-    <div id="detail" class="card" aria-live="polite">
+    <div id="detail" aria-live="polite">
       <button class="close" id="detailClose" aria-label="Close details">✕</button>
+      <button class="close" id="orbitBtn" aria-pressed="true" aria-label="Orbit around this plane" title="Orbit" style="right:44px">⟳</button>
       <h2 id="dTitle"></h2>
       <div class="sub" id="dSub"></div>
-      <img id="dPhoto" alt="" hidden>
       <dl id="dBody"></dl>
-      <button id="followBtn" aria-pressed="false">Follow</button>
     </div>
 
     <div id="settings" class="card" role="dialog" aria-labelledby="setTitle">
@@ -790,13 +802,66 @@ const AircraftModels = (() => {
   function select(id) {
     const prev = state.selected; state.selected = id || null;
     for (const k of [prev, state.selected]) { const p = k && state.planes.get(k); if (p) styleEntity(p); }
-    if (!id && isFollowing()) stopFollow();
-    const p = id && state.planes.get(id); if (p) { fetchRoute(p.callsign); fetchMeta(id); }
+    const p = id && state.planes.get(id);
+    if (p) {
+      fetchRoute(p.callsign); fetchMeta(id);
+      const ent = state.entities.get(id)?.ent; if (ent && viewer.selectedEntity !== ent) viewer.selectedEntity = ent; // so tapping empty map deselects
+      if (!personOn && id !== prev) zoomToPlane(id);
+    }
+    else if (isFollowing() || flyingToPlane) stopFollow();
     renderList(); renderDetail();
+  }
+  // Fly in just behind and above the plane, then keep following it.
+  let flyingToPlane = false;
+  function zoomToPlane(id) {
+    const e = state.entities.get(id), p = state.planes.get(id); if (!e || !p) return;
+    exitSky(); viewer.trackedEntity = undefined; camera.lookAtTransform(C.Matrix4.IDENTITY);
+    const h = C.Math.toRadians(p.heading || 0), pitch = C.Math.toRadians(-12), range = Math.max(p.typeInfo.L * 2.6, 40);
+    e.ent.viewFrom = new C.Cartesian3(-Math.sin(h) * range * Math.cos(pitch), -Math.cos(h) * range * Math.cos(pitch), range * Math.sin(-pitch));
+    flyingToPlane = true;
+    viewer.flyTo(e.ent, { duration: 1.4, offset: new C.HeadingPitchRange(h, pitch, range) }).then(ok => {
+      flyingToPlane = false;
+      if (ok && state.selected === id && state.entities.get(id) === e) viewer.trackedEntity = e.ent;
+    });
   }
   viewer.selectedEntityChanged.addEventListener(ent => {
     const id = ent && String(ent.id).replace(/-trail$/, "");
     if (id && state.planes.has(id)) select(id);
+    else if (!ent && state.selected) select(null); // tapped empty map: back to your view
+  });
+
+  // Slow continuous orbit around the followed plane. Touching the map pauses it; it resumes after a few seconds.
+  let orbitOn = store.get("orbit", true), orbitPausedUntil = 0, lastOrbitT = performance.now();
+  const ORBIT_DEG_PER_SEC = 10; // one lap ≈ 36 s
+  scene.preRender.addEventListener(() => {
+    const now = performance.now(), dt = Math.min((now - lastOrbitT) / 1000, 0.1); lastOrbitT = now;
+    if (orbitOn && viewer.trackedEntity && !flyingToPlane && now > orbitPausedUntil) camera.rotateRight(C.Math.toRadians(ORBIT_DEG_PER_SEC * dt));
+  });
+  const pauseOrbit = () => { orbitPausedUntil = performance.now() + 5000; };
+  for (const ev of ["pointerdown", "wheel", "touchstart"]) scene.canvas.addEventListener(ev, pauseOrbit, { passive: true });
+  function setOrbit(on) { orbitOn = on; store.set("orbit", on); $("orbitBtn").setAttribute("aria-pressed", String(on)); orbitPausedUntil = 0; }
+  $("orbitBtn").addEventListener("click", () => setOrbit(!orbitOn));
+  $("orbitBtn").setAttribute("aria-pressed", String(orbitOn));
+
+  // Keep the panel just under the selected plane on screen.
+  const tmpWin = new C.Cartesian2();
+  scene.postRender.addEventListener(() => {
+    const el = $("detail"); if (!state.selected || el.style.display === "none") return;
+    const e = state.entities.get(state.selected); const pos = e && e.ent.position.getValue(viewer.clock.currentTime);
+    const win = pos && scene.cartesianToCanvasCoordinates(pos, tmpWin);
+    const W = scene.canvas.clientWidth, H = scene.canvas.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
+    if (win && win.x > -40 && win.x < W + 40 && win.y > -40 && win.y < H + 40) {
+      const below = isFollowing() || flyingToPlane ? 70 : 34; // clear the model when we're close
+      const left = C.Math.clamp(win.x - w / 2, 8, W - w - 8);
+      const top = C.Math.clamp(win.y + below, 8, H - h - 8);
+      // Ignore sub-2px wobble so the panel sits still while following.
+      const L0 = parseFloat(el.style.left) || 0, T0 = parseFloat(el.style.top) || 0;
+      if (Math.abs(left - L0) > 2 || Math.abs(top - T0) > 2) { el.style.left = Math.round(left) + "px"; el.style.top = Math.round(top) + "px"; }
+      el.style.setProperty("--arrow-x", C.Math.clamp(win.x - left, 18, w - 18) + "px");
+      el.style.setProperty("--arrow", top >= win.y + 10 ? "block" : "none");
+    } else { // plane off screen: dock at the bottom
+      el.style.left = Math.max(8, (W - w) / 2) + "px"; el.style.top = (H - h - 54) + "px"; el.style.setProperty("--arrow", "none");
+    }
   });
 
   function renderDetail() {
@@ -811,22 +876,20 @@ const AircraftModels = (() => {
       : p.desc ? `${esc(p.desc)}${p.typeCode ? ` · ${esc(p.typeCode)}` : ""}`
       : t.exact ? `${esc(AM.CLASS_NAME[t.fam])} · ${esc(t.code)}`
       : `${esc(AM.CLASS_NAME[t.fam])} <span title="Type not reported; model estimated">(estimated)</span>`;
-    const img = $("dPhoto");
-    if (m.photo && /^https:\/\//.test(m.photo)) { img.src = m.photo; img.alt = `Photo of ${m.reg || p.callsign}`; img.hidden = false; img.onerror = () => (img.hidden = true); }
-    else img.hidden = true;
     $("dBody").innerHTML = `
+      <div class="stats" style="grid-column:1/-1">
+        <div class="stat"><b>${p.onGround ? "GND" : fmt(p.altFt)}</b><span>${p.onGround ? "On ground" : "Alt ft"}</span></div>
+        <div class="stat"><b>${fmt(p.speedKt)}</b><span>Speed kt</span></div>
+        <div class="stat"><b>${fmt(p.distKm / KM_PER_MI, 1)}</b><span>Miles away</span></div>
+      </div>
       ${rt && rt.from ? `<dt>Route</dt><dd>${apt(rt.from)} → ${apt(rt.to)}</dd>` : ""}
       ${rt?.airline ? `<dt>Airline</dt><dd>${esc(rt.airline)}</dd>` : ""}
-      <dt>Altitude</dt><dd>${p.onGround ? "On ground" : fmt(p.altFt) + " ft (GPS)"}</dd>
-      <dt>Speed</dt><dd>${fmt(p.speedKt)} kt</dd><dt>Heading</dt><dd>${fmt(p.heading)}°</dd>
-      <dt>Vertical</dt><dd>${climb}</dd><dt>Distance</dt><dd>${fmt(p.distKm / KM_PER_MI, 1)} mi</dd>
+      <dt>Heading</dt><dd>${fmt(p.heading)}°</dd><dt>Vertical</dt><dd>${climb}</dd>
       ${(m.reg || p.reg) ? `<dt>Registration</dt><dd>${esc(m.reg || p.reg)}</dd>` : ""}
       ${(m.owner || p.operator) ? `<dt>Operator</dt><dd>${esc(m.owner || p.operator)}</dd>` : ""}
       <dt>Squawk</dt><dd>${esc(p.squawk || "—")}</dd><dt>ICAO24</dt><dd>${esc(p.icao24)}</dd>
       <dt>More</dt><dd><a href="https://www.flightaware.com/live/flight/${encodeURIComponent(cs)}" target="_blank" rel="noopener">FlightAware</a> ·
         <a href="https://globe.adsbexchange.com/?icao=${encodeURIComponent(p.icao24)}" target="_blank" rel="noopener">ADS-B Exchange</a></dd>`;
-    $("followBtn").textContent = isFollowing() ? "Stop following" : "Follow";
-    $("followBtn").setAttribute("aria-pressed", String(isFollowing()));
     $("detail").style.display = "block";
   }
   $("detailClose").addEventListener("click", () => { viewer.selectedEntity = undefined; select(null); });
@@ -1123,12 +1186,7 @@ const AircraftModels = (() => {
   // Follow a plane (camera orbits the plane instead of you). Stopping returns to your view.
   const isFollowing = () => !!viewer.trackedEntity;
   function stopFollow() { viewer.trackedEntity = undefined; goView(state.view === "person" ? "overview" : state.view, 1.2); }
-  $("followBtn").addEventListener("click", () => {
-    const e = state.entities.get(state.selected); if (!e) return;
-    if (isFollowing()) stopFollow();
-    else { exitSky(); camera.lookAtTransform(C.Matrix4.IDENTITY); viewer.trackedEntity = e.ent; }
-    renderDetail();
-  });
+
 
   // ---------- You: marker, ring, terrain-aware pivot ----------
   function ringPositions(c, radiusKm) {
