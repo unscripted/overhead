@@ -59,7 +59,7 @@
   #list tbody tr { cursor:pointer; } #list tr.sel td { background:#2a2414; }
   .num { text-align:right !important; font-variant-numeric:tabular-nums; }
   .card { position:absolute; z-index:10; background:rgba(24,27,34,.97); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
-  #detail { left:12px; right:12px; bottom:12px; max-width:400px; display:none; max-height:calc(100% - 24px); overflow:auto; }
+  #detail { left:12px; right:66px; bottom:12px; max-width:400px; display:none; max-height:calc(100% - 24px); overflow:auto; }
   #detail h2 { margin:0 0 2px; font-size:18px; padding-right:30px; }
   #detail .sub { color:var(--muted); font-size:13px; margin-bottom:8px; }
   #detail img { width:100%; max-height:150px; object-fit:cover; border-radius:8px; margin-bottom:8px; display:block; background:#222; }
@@ -73,6 +73,15 @@
   #settings .row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
   #msg { position:absolute; z-index:11; top:56px; left:50%; transform:translateX(-50%); max-width:90%;
     background:rgba(24,27,34,.97); border:1px solid var(--line); border-radius:10px; padding:10px 14px; display:none; }
+  #maptools { position:absolute; z-index:12; right:10px; bottom:46px; display:flex; flex-direction:column; gap:8px; }
+  .tool { width:44px; height:44px; padding:0; display:grid; place-items:center; border-radius:12px;
+    background:rgba(24,27,34,.9); border:1px solid var(--line); color:var(--text); }
+  #compass { transition:transform .1s linear; }
+  body.full header, body.full #controls, body.full #list { display:none; }
+  body.full #globewrap { padding-top:env(safe-area-inset-top); }
+  body.full #views { top:calc(10px + env(safe-area-inset-top)); }
+  body.full #legend { top:calc(52px + env(safe-area-inset-top)); }
+  body.full #maptools { bottom:calc(46px + env(safe-area-inset-bottom)); }
   #legend { position:absolute; z-index:5; top:52px; right:10px; background:rgba(24,27,34,.85); border:1px solid var(--line);
     border-radius:8px; padding:6px 8px; font-size:11px; color:var(--muted); }
   #legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 8px; vertical-align:-1px; }
@@ -95,7 +104,16 @@
     <div id="views" role="group" aria-label="Camera view">
       <button data-view="overview" aria-pressed="true">Overview</button>
       <button data-view="close" aria-pressed="false">Close</button>
-      <button data-view="sky" aria-pressed="false">Sky view</button>
+      <button data-view="top" aria-pressed="false">Top</button>
+      <button data-view="sky" aria-pressed="false">Sky</button>
+    </div>
+    <div id="maptools">
+      <button id="northBtn" class="tool" aria-label="Reset to north up" title="North up">
+        <svg id="compass" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l4 10h-8z" fill="#ff5a5a"/><path d="M12 22l-4-10h8z" fill="#c9ced8"/><text x="12" y="9.6" text-anchor="middle" font-size="5.5" font-weight="700" fill="#fff" font-family="system-ui">N</text></svg>
+      </button>
+      <button id="fullBtn" class="tool" aria-label="Full screen map" aria-pressed="false" title="Full screen">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path id="fullIcon" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
     </div>
     <div id="msg" role="alert"></div>
 
@@ -798,6 +816,8 @@ const AircraftModels = (() => {
   const VIEWS = {
     overview: () => { const r = +$("radius").value * KM_PER_MI * 1000; return new C.HeadingPitchRange(0, C.Math.toRadians(-30), r * 1.2); },
     close: () => new C.HeadingPitchRange(0, C.Math.toRadians(-10), 18000),
+    // Straight down, north up, sized so the whole radius circle fits on a phone screen.
+    top: () => { const r = +$("radius").value * KM_PER_MI * 1000; return new C.HeadingPitchRange(0, C.Math.toRadians(-89.9), r * 2.3); },
   };
   function pivotFrame() { return C.Transforms.eastNorthUpToFixedFrame(state.pivot); }
   function lockToPivot(hpr) { camera.lookAtTransform(pivotFrame(), hpr); }
@@ -849,6 +869,49 @@ const AircraftModels = (() => {
   }, C.ScreenSpaceEventType.PINCH_MOVE);
 
   document.querySelectorAll("#views button").forEach(b => b.addEventListener("click", () => goView(b.dataset.view)));
+
+  // ---------- North up: spin the view back to heading 0 without moving the camera's pivot ----------
+  const compass = $("compass");
+  scene.preRender.addEventListener(() => { compass.style.transform = `rotate(${-C.Math.toDegrees(camera.heading)}deg)`; });
+  let northAnim = null;
+  function setHeading(h) {
+    if (skyOn) { camera.setView({ orientation: { heading: h, pitch: camera.pitch, roll: 0 } }); return; }
+    if (C.Matrix4.equals(camera.transform, C.Matrix4.IDENTITY)) return; // mid-flight; nothing to orbit
+    const center = C.Matrix4.getTranslation(camera.transform, new C.Cartesian3());
+    camera.lookAtTransform(camera.transform, new C.HeadingPitchRange(h, camera.pitch, C.Cartesian3.distance(camera.positionWC, center)));
+  }
+  $("northBtn").addEventListener("click", () => {
+    if (northAnim) cancelAnimationFrame(northAnim);
+    if (!skyOn && C.Matrix4.equals(camera.transform, C.Matrix4.IDENTITY) && state.pivot && !isFollowing()) lockToPivot(currentHpr());
+    let h0 = camera.heading; if (h0 > Math.PI) h0 -= 2 * Math.PI; // shortest way round
+    const t0 = performance.now(), dur = 450;
+    const step = now => {
+      const t = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - t, 3);
+      setHeading(h0 * (1 - e));
+      northAnim = t < 1 ? requestAnimationFrame(step) : null;
+    };
+    northAnim = requestAnimationFrame(step);
+  });
+
+  // ---------- Full-screen map: hides the header, controls and list; uses real fullscreen where supported ----------
+  function setFull(on) {
+    document.body.classList.toggle("full", on);
+    $("fullBtn").setAttribute("aria-pressed", String(on));
+    $("fullBtn").setAttribute("aria-label", on ? "Exit full screen" : "Full screen map");
+    $("fullIcon").setAttribute("d", on ? "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" : "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5");
+    store.set("full", on);
+  }
+  $("fullBtn").addEventListener("click", async () => {
+    const on = !document.body.classList.contains("full");
+    setFull(on);
+    try {
+      if (on && document.documentElement.requestFullscreen && !document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+      else if (!on && document.fullscreenElement) await document.exitFullscreen();
+    } catch { /* iPhone Safari has no element fullscreen; the in-page full screen still applies */ }
+  });
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && document.body.classList.contains("full")) setFull(false); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && document.body.classList.contains("full") && !document.fullscreenElement) setFull(false); });
+  if (store.get("full", false)) setFull(true);
 
   // Follow a plane (camera orbits the plane instead of you). Stopping returns to your view.
   const isFollowing = () => !!viewer.trackedEntity;
