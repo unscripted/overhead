@@ -74,9 +74,17 @@
   #msg { position:absolute; z-index:11; top:56px; left:50%; transform:translateX(-50%); max-width:90%;
     background:rgba(24,27,34,.97); border:1px solid var(--line); border-radius:10px; padding:10px 14px; display:none; }
   #maptools { position:absolute; z-index:12; right:10px; bottom:46px; display:flex; flex-direction:column; gap:8px; }
+  .tool[hidden] { display:none; }
   .tool { width:44px; height:44px; padding:0; display:grid; place-items:center; border-radius:12px;
     background:rgba(24,27,34,.9); border:1px solid var(--line); color:var(--text); }
   #compass { transition:transform .1s linear; }
+  #personBtn[aria-pressed="true"] { background:#3ea6ff; border-color:#3ea6ff; color:#06121f; }
+  #hud { position:absolute; z-index:6; left:10px; bottom:46px; max-width:calc(100% - 76px); display:none;
+    background:rgba(24,27,34,.9); border:1px solid var(--line); border-radius:10px; padding:6px 10px; font-size:12px; line-height:1.45; }
+  #hud b { font-weight:600; }
+  body.person #hud { display:block; }
+  body.person #legend { display:none; }
+  body.person.motion #northBtn { display:none; }
   body.full header, body.full #controls, body.full #list { display:none; }
   body.full #globewrap { padding-top:env(safe-area-inset-top); }
   body.full #views { top:calc(10px + env(safe-area-inset-top)); }
@@ -105,9 +113,14 @@
       <button data-view="overview" aria-pressed="true">Overview</button>
       <button data-view="close" aria-pressed="false">Close</button>
       <button data-view="top" aria-pressed="false">Top</button>
-      <button data-view="sky" aria-pressed="false">Sky</button>
     </div>
     <div id="maptools">
+      <button id="personBtn" class="tool" aria-label="Person view: see the sky from where you are" aria-pressed="false" title="Person view">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="currentColor"><circle cx="12" cy="4.5" r="2.5"/><path d="M8.5 8.5h7l-1 6.5h-1.6l-.4 7h-2l-.4-7H9.5z"/></svg>
+      </button>
+      <button id="homeBtn" class="tool" aria-label="Back to my location" title="Back to me" hidden>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4" fill="#3ea6ff" stroke="#fff"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+      </button>
       <button id="northBtn" class="tool" aria-label="Reset to north up" title="North up">
         <svg id="compass" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l4 10h-8z" fill="#ff5a5a"/><path d="M12 22l-4-10h8z" fill="#c9ced8"/><text x="12" y="9.6" text-anchor="middle" font-size="5.5" font-weight="700" fill="#fff" font-family="system-ui">N</text></svg>
       </button>
@@ -115,6 +128,7 @@
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path id="fullIcon" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
       </button>
     </div>
+    <div id="hud" aria-live="polite"></div>
     <div id="msg" role="alert"></div>
 
     <div id="detail" class="card" aria-live="polite">
@@ -672,7 +686,7 @@ const AircraftModels = (() => {
   // ---------- Fetch (only while visible & not paused) ----------
   // Tries your proxy first (if set in Settings), then each community ADS-B feed directly.
   function sources() {
-    const { lat, lon } = state.me, nm = Math.ceil(+$("radius").value * 0.869 + 1), la = lat.toFixed(4), lo = lon.toFixed(4);
+    const { lat, lon } = state.center || state.me, nm = Math.ceil(+$("radius").value * 0.869 + 1), la = lat.toFixed(4), lo = lon.toFixed(4);
     const list = [];
     list.push({ name: "proxy", url: `/api/aircraft?lat=${la}&lon=${lo}&nm=${nm}` });
     list.push({ name: "airplanes.live", url: `https://api.airplanes.live/v2/point/${la}/${lo}/${nm}` },
@@ -724,7 +738,7 @@ const AircraftModels = (() => {
       if (p.lat == null || p.lon == null) continue;
       if (p.onGround && !showGround) continue;
       p.distKm = haversineKm(state.me, p);
-      if (p.distKm > radiusKm) continue;
+      if (haversineKm(state.center || state.me, p) > radiusKm) continue;
       const prev = state.planes.get(p.icao24);
       p.trail = prev ? prev.trail : [];
       p.groundH = groundAt(p.lat, p.lon);
@@ -825,36 +839,190 @@ const AircraftModels = (() => {
     return new C.HeadingPitchRange(camera.heading, camera.pitch, C.Cartesian3.distance(camera.positionWC, state.pivot));
   }
   function setOrbitControls(on) {
-    ctrl.enableRotate = ctrl.enableZoom = ctrl.enableTilt = on; ctrl.enableTranslate = false; ctrl.enableLook = false;
+    // One-finger / left drag pans (handled below); pinch or scroll zooms; two-finger twist/drag (or Ctrl+drag) rotates and tilts.
+    ctrl.enableZoom = ctrl.enableTilt = on; ctrl.enableRotate = false; ctrl.enableTranslate = false; ctrl.enableLook = false;
   }
   function goView(view, duration = 1.8) {
     if (!state.pivot) return;
+    if (view !== "person" && personOn) stopPerson();
     state.view = view;
     document.querySelectorAll("#views button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
     if (isFollowing()) { viewer.trackedEntity = undefined; renderDetail(); }
     camera.lookAtTransform(C.Matrix4.IDENTITY);
-    if (view === "sky") return enterSky(duration);
+    if (view === "person") return enterPerson(duration);
     exitSky();
+    resetPan();
     const hpr = VIEWS[view]();
     camera.flyToBoundingSphere(new C.BoundingSphere(state.pivot, 1), {
       offset: hpr, duration, complete: () => lockToPivot(hpr), cancel: () => lockToPivot(currentHpr()) });
   }
 
-  // Sky view: stand at your spot (~6 ft eye height), look up. Drag looks around, pinch/scroll zooms (field of view).
-  let skyOn = false, skyDrag = null;
-  const skyHandler = new C.ScreenSpaceEventHandler(scene.canvas);
-  function enterSky(duration) {
-    skyOn = true; setOrbitControls(false);
+  // ---------- Pan: drag the map; the orbit center moves with it. Flight data follows the map center. ----------
+  const panHandler = new C.ScreenSpaceEventHandler(scene.canvas);
+  let panStart = null, panned = false;
+  const pickGround = pos => { const ray = camera.getPickRay(pos); return (ray && scene.globe.pick(ray, scene)) || camera.pickEllipsoid(pos); };
+  const isOrbitLocked = () => !skyOn && !isFollowing() && !C.Matrix4.equals(camera.transform, C.Matrix4.IDENTITY);
+  panHandler.setInputAction(e => { panStart = isOrbitLocked() ? pickGround(e.position) : null; }, C.ScreenSpaceEventType.LEFT_DOWN);
+  panHandler.setInputAction(e => {
+    if (!panStart || !isOrbitLocked()) return;
+    const p1 = pickGround(e.endPosition); if (!p1) return;
+    const c0 = C.Cartographic.fromCartesian(panStart), c1 = C.Cartographic.fromCartesian(p1), pc = C.Cartographic.fromCartesian(state.pivot);
+    pc.longitude += c0.longitude - c1.longitude;
+    pc.latitude = C.Math.clamp(pc.latitude + c0.latitude - c1.latitude, -1.5, 1.5);
+    const offset = C.Cartesian3.clone(camera.position); // camera position in the pivot's local frame: keeps zoom, tilt and heading exactly
+    state.pivot = C.Cartographic.toCartesian(pc);
+    camera.lookAtTransform(pivotFrame(), offset);
+    panned = true;
+  }, C.ScreenSpaceEventType.MOUSE_MOVE);
+  const endPan = () => {
+    if (!panStart) return; panStart = null;
+    if (!panned) return;
     const c = C.Cartographic.fromCartesian(state.pivot);
-    const eye = C.Cartesian3.fromRadians(c.longitude, c.latitude, c.height - 2 + 1.8); // pivot sits 2 m up; eye ≈ 6 ft
-    camera.flyTo({ destination: eye, orientation: { heading: camera.heading, pitch: C.Math.toRadians(35), roll: 0 }, duration });
+    state.center = { lat: C.Math.toDegrees(c.latitude), lon: C.Math.toDegrees(c.longitude) };
+    $("homeBtn").hidden = haversineKm(state.center, state.me) < 0.5;
+    state.lastFetch = 0; restartTimer(true); // load flights around the new center
+  };
+  panHandler.setInputAction(endPan, C.ScreenSpaceEventType.LEFT_UP);
+  panHandler.setInputAction(() => { panStart = null; }, C.ScreenSpaceEventType.PINCH_START); // two fingers: rotate/zoom, not pan
+  function resetPan() {
+    if (state.home) state.pivot = state.home;
+    const wasAway = !!state.center; state.center = null; panned = false; $("homeBtn").hidden = true;
+    if (wasAway) { state.lastFetch = 0; restartTimer(true); }
   }
-  function exitSky() { if (!skyOn) { setOrbitControls(true); return; } skyOn = false; camera.frustum.fov = C.Math.toRadians(60); setOrbitControls(true); }
+  $("homeBtn").addEventListener("click", () => goView(state.view === "person" ? "overview" : state.view, 1.4));
+
+  // ---------- Person view: stand where you are, at your real elevation, and look around ----------
+  // With motion access the phone becomes a viewfinder (compass + gyroscope); dragging fine-tunes the
+  // direction. Without it, drag to look around. Pinch/scroll zooms (field of view) either way.
+  let skyOn = false, skyDrag = null, personOn = false, prevView = "overview";
+  const skyHandler = new C.ScreenSpaceEventHandler(scene.canvas);
+  const person = { watch: null, fix: null, groundH: 0, eye: null, motion: false, ready: false,
+    R: null, yawOffset: null, manualYaw: 0, absolute: false, f: null, u: null };
+  const rad = C.Math.toRadians, deg = C.Math.toDegrees;
+
+  function eyeHeight() {
+    // GPS altitude when the phone reports one (clamped so you never end up underground), else ground + 1.7 m.
+    const g = person.groundH || 0, a = person.fix?.alt, acc = person.fix?.altAcc;
+    const gps = a != null && (acc == null || acc < 60) ? a + 1.2 : null;
+    return Math.max(g + 1.7, gps ?? g + 1.7);
+  }
+  async function refreshEye() {
+    const fx = person.fix || state.me; if (!fx) return;
+    const c = C.Cartographic.fromDegrees(fx.lon, fx.lat, 0);
+    if (!(viewer.terrainProvider instanceof C.EllipsoidTerrainProvider)) {
+      try { await C.sampleTerrainMostDetailed(viewer.terrainProvider, [c]); person.groundH = c.height || 0; } catch { person.groundH = 0; }
+    } else person.groundH = 0;
+    person.eye = C.Cartesian3.fromDegrees(fx.lon, fx.lat, eyeHeight());
+    if (personOn && !person.motion && person.ready) camera.setView({ destination: person.eye, orientation: { heading: camera.heading, pitch: camera.pitch, roll: 0 } });
+    updateHud();
+  }
+  const compassPts = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  function updateHud() {
+    if (!personOn) return;
+    const h = (deg(camera.heading) + 360) % 360, p = deg(camera.pitch);
+    const elevFt = Math.round(eyeHeight() * M_TO_FT);
+    const src = person.fix?.alt != null ? "GPS" : (viewer.terrainProvider instanceof C.EllipsoidTerrainProvider ? "est." : "terrain");
+    $("hud").innerHTML = `<b>You</b> · ${fmt(elevFt)} ft elevation (${src})<br>Facing ${compassPts[Math.round(h / 45) % 8]} ${Math.round(h)}° · ` +
+      `${p >= 0 ? "looking up" : "looking down"} ${Math.abs(Math.round(p))}°<br><span style="color:var(--muted)">${person.motion ? "Move your phone to look around · drag to fine-tune" : "Drag to look around · pinch to zoom"}</span>`;
+  }
+
+  // Device orientation → camera. W3C rotation R = Rz(alpha)·Rx(beta)·Ry(gamma) maps device axes to east/north/up.
+  function onOrient(e) {
+    if (e.alpha == null || e.beta == null || e.gamma == null) return;
+    const a = rad(e.alpha), b = rad(e.beta), g = rad(e.gamma);
+    const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
+    const R = [[cA * cG - sA * sB * sG, -sA * cB, cA * sG + sA * sB * cG],
+               [sA * cG + cA * sB * sG, cA * cB, sA * sG - cA * sB * cG],
+               [-cB * sG, sB, cB * cG]];
+    person.R = R;
+    const col = i => [R[0][i], R[1][i], R[2][i]], hdg = v => (deg(Math.atan2(v[0], v[1])) + 360) % 360;
+    if (e.absolute || e.type === "deviceorientationabsolute") { person.absolute = true; person.yawOffset = 0; }
+    else if (!person.absolute && typeof e.webkitCompassHeading === "number" && e.webkitCompassAccuracy !== -1) {
+      // iOS: alpha has an arbitrary zero, so align it with the compass heading.
+      const upright = Math.abs(e.beta) > 45, back = col(2).map(x => -x);
+      const ref = upright ? hdg(back) : hdg(col(1));
+      let target = e.webkitCompassHeading - ref;
+      if (person.yawOffset == null) person.yawOffset = target;
+      else { const d = ((target - person.yawOffset + 540) % 360) - 180; person.yawOffset += d * 0.05; } // smooth compass jitter
+    }
+  }
+  function applyOrientation() {
+    if (!person.R || !person.eye) return;
+    const R = person.R, ang = rad(screen.orientation?.angle ?? window.orientation ?? 0);
+    const mul = v => [R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2], R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2], R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2]];
+    let f = mul([0, 0, -1]), u = mul([-Math.sin(ang), Math.cos(ang), 0]);
+    const yaw = rad((person.yawOffset || 0) + person.manualYaw); // compass correction: rotate clockwise about up
+    const rz = v => [v[0] * Math.cos(yaw) + v[1] * Math.sin(yaw), -v[0] * Math.sin(yaw) + v[1] * Math.cos(yaw), v[2]];
+    f = rz(f); u = rz(u);
+    // Light smoothing to calm sensor noise.
+    const mix = (o, n) => o ? n.map((x, i) => o[i] + (x - o[i]) * 0.35) : n;
+    person.f = mix(person.f, f); person.u = mix(person.u, u);
+    const enu = C.Transforms.eastNorthUpToFixedFrame(person.eye);
+    const toW = v => C.Cartesian3.normalize(C.Matrix4.multiplyByPointAsVector(enu, new C.Cartesian3(v[0], v[1], v[2]), new C.Cartesian3()), new C.Cartesian3());
+    camera.setView({ destination: person.eye, orientation: { direction: toW(person.f), up: toW(person.u) } });
+  }
+  scene.preRender.addEventListener(() => { if (personOn && person.ready) { if (person.motion) applyOrientation(); updateHud(); } });
+
+  async function enterPerson(duration) {
+    personOn = true; skyOn = true; setOrbitControls(false);
+    ctrl.minimumZoomDistance = 0; ctrl.enableCollisionDetection = false;
+    document.body.classList.add("person");
+    $("personBtn").setAttribute("aria-pressed", "true");
+    person.ready = false; person.f = person.u = null;
+    // Live position while in this mode (high accuracy for altitude).
+    if ("geolocation" in navigator && person.watch == null) {
+      person.watch = navigator.geolocation.watchPosition(pos => {
+        const c = pos.coords;
+        person.fix = { lat: c.latitude, lon: c.longitude, alt: c.altitude, altAcc: c.altitudeAccuracy };
+        refreshEye();
+      }, () => {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+    }
+    await refreshEye();
+    const eye = person.eye || C.Cartesian3.fromDegrees(state.me.lon, state.me.lat, 1.7);
+    camera.flyTo({ destination: eye, orientation: { heading: camera.heading, pitch: rad(30), roll: 0 }, duration,
+      complete: () => { person.ready = true; updateHud(); }, cancel: () => { person.ready = true; } });
+  }
+  async function enableMotion() {
+    try {
+      const DOE = window.DeviceOrientationEvent;
+      if (DOE && typeof DOE.requestPermission === "function") { // iOS: must be asked from a tap
+        if ((await DOE.requestPermission()) !== "granted") return false;
+      } else if (!DOE) return false;
+      window.addEventListener("deviceorientationabsolute", onOrient);
+      window.addEventListener("deviceorientation", onOrient);
+      return true;
+    } catch { return false; }
+  }
+  function stopPerson() {
+    personOn = false; skyOn = false; person.motion = false; person.ready = false;
+    window.removeEventListener("deviceorientationabsolute", onOrient);
+    window.removeEventListener("deviceorientation", onOrient);
+    if (person.watch != null) { navigator.geolocation.clearWatch(person.watch); person.watch = null; }
+    person.R = null; person.manualYaw = 0;
+    camera.frustum.fov = rad(60); setOrbitControls(true);
+    ctrl.minimumZoomDistance = 150; ctrl.enableCollisionDetection = true;
+    document.body.classList.remove("person", "motion");
+    $("personBtn").setAttribute("aria-pressed", "false");
+  }
+  function exitSky() { if (!skyOn) setOrbitControls(true); }
+  $("personBtn").addEventListener("click", async () => {
+    if (personOn) { goView(prevView === "person" ? "overview" : prevView, 1.6); return; }
+    if (!state.pivot) return;
+    prevView = state.view;
+    // Ask for motion right away (iOS only allows it from a tap), then fly in.
+    const isTouch = matchMedia("(pointer: coarse)").matches;
+    const motionPromise = isTouch ? enableMotion() : Promise.resolve(false);
+    goView("person", 1.8);
+    person.motion = await motionPromise;
+    document.body.classList.toggle("motion", person.motion);
+    if (isTouch && !person.motion) showMsg("Motion access wasn't granted, so drag to look around. To use your phone as a viewfinder, allow Motion & Orientation for this site.", 7000);
+  });
   skyHandler.setInputAction(e => { if (skyOn) skyDrag = C.Cartesian2.clone(e.position); }, C.ScreenSpaceEventType.LEFT_DOWN);
   skyHandler.setInputAction(() => (skyDrag = null), C.ScreenSpaceEventType.LEFT_UP);
   skyHandler.setInputAction(e => {
     if (!skyOn || !skyDrag) return;
     const dx = e.endPosition.x - skyDrag.x, dy = e.endPosition.y - skyDrag.y, k = camera.frustum.fov / scene.canvas.clientHeight;
+    if (person.motion) { person.manualYaw -= deg(dx * k); skyDrag = C.Cartesian2.clone(e.endPosition); return; }
     const pitch = C.Math.clamp(camera.pitch + dy * k, C.Math.toRadians(-10), C.Math.toRadians(89));
     camera.setView({ orientation: { heading: camera.heading - dx * k, pitch, roll: 0 } });
     skyDrag = C.Cartesian2.clone(e.endPosition);
@@ -915,7 +1083,7 @@ const AircraftModels = (() => {
 
   // Follow a plane (camera orbits the plane instead of you). Stopping returns to your view.
   const isFollowing = () => !!viewer.trackedEntity;
-  function stopFollow() { viewer.trackedEntity = undefined; goView(state.view === "sky" ? "overview" : state.view, 1.2); }
+  function stopFollow() { viewer.trackedEntity = undefined; goView(state.view === "person" ? "overview" : state.view, 1.2); }
   $("followBtn").addEventListener("click", () => {
     const e = state.entities.get(state.selected); if (!e) return;
     if (isFollowing()) stopFollow();
@@ -949,10 +1117,11 @@ const AircraftModels = (() => {
     if (!(viewer.terrainProvider instanceof C.EllipsoidTerrainProvider)) {
       try { await C.sampleTerrainMostDetailed(viewer.terrainProvider, [c]); } catch { c.height = 0; }
     }
-    state.pivot = C.Cartesian3.fromRadians(c.longitude, c.latitude, (c.height || 0) + 2);
+    state.home = C.Cartesian3.fromRadians(c.longitude, c.latitude, (c.height || 0) + 2);
+    if (!state.center) state.pivot = state.home;
   }
   async function setMe(lat, lon) {
-    state.me = { lat, lon }; drawMe(); await updatePivot(); goView(state.view === "sky" ? "sky" : "overview", 2.5); restartTimer(true);
+    state.me = { lat, lon }; drawMe(); await updatePivot(); goView(state.view === "person" ? "person" : "overview", 2.5); restartTimer(true);
   }
   function locate() {
     if (!("geolocation" in navigator)) return askManual("Location isn't available in this browser.");
@@ -994,7 +1163,7 @@ const AircraftModels = (() => {
       await updatePivot();
       for (const p of state.planes.values()) p.groundH = undefined;
       setTimeout(() => { for (const p of state.planes.values()) p.groundH = groundAt(p.lat, p.lon); }, 3000);
-      if (state.view === "sky") goView("sky", 1); else if (!isFollowing()) lockToPivot(currentHpr());
+      if (personOn) refreshEye(); else if (!isFollowing()) lockToPivot(currentHpr());
     }
   }
   $("mapStyle").addEventListener("change", applyMap);
@@ -1003,21 +1172,28 @@ const AircraftModels = (() => {
   setInterval(() => { if (!document.hidden) for (const p of state.planes.values()) p.groundH = groundAt(p.lat, p.lon); }, 4000);
 
   // ---------- Settings ----------
-  function openSettings() { $("settings").style.display = "block"; $("gear").setAttribute("aria-expanded", "true"); $("ionToken").value = state.token; $("ionToken").focus(); }
+  function openSettings() { $("settings").style.display = "block"; $("gear").setAttribute("aria-expanded", "true"); $("ionToken").value = state.tokenFromServer ? "" : state.token;
+    $("ionToken").placeholder = state.tokenFromServer ? "Using the app's built-in token (optional override)" : "Paste token"; $("ionToken").focus(); }
   function closeSettings() { $("settings").style.display = "none"; $("gear").setAttribute("aria-expanded", "false"); $("gear").focus(); }
   $("gear").addEventListener("click", () => ($("settings").style.display === "block" ? closeSettings() : openSettings()));
   $("settingsClose").addEventListener("click", closeSettings);
   $("settings").addEventListener("keydown", e => { if (e.key === "Escape") closeSettings(); });
   $("saveToken").addEventListener("click", async () => {
-    state.token = $("ionToken").value.trim(); store.set("ionToken", state.token);
+    const own = $("ionToken").value.trim(); store.set("ionToken", own);
+    if (own) { state.token = own; state.tokenFromServer = false; }
     C.Ion.defaultAccessToken = state.token || undefined;
     closeSettings();
     if (state.token) { $("terrain").checked = true; await applyTerrain(); showMsg("Token saved. Terrain is on, and HD imagery is available under Map.", 5000); }
   });
   $("clearToken").addEventListener("click", async () => {
-    state.token = ""; store.set("ionToken", ""); C.Ion.defaultAccessToken = undefined; $("ionToken").value = "";
-    if ($("mapStyle").value.startsWith("ion")) { $("mapStyle").value = "esri"; await applyMap(); }
-    $("terrain").checked = false; await applyTerrain(); closeSettings();
+    store.set("ionToken", ""); $("ionToken").value = ""; state.token = ""; state.tokenFromServer = false;
+    await loadConfig(); // fall back to the built-in token if there is one
+    C.Ion.defaultAccessToken = state.token || undefined;
+    if (!state.token) {
+      if ($("mapStyle").value.startsWith("ion")) { $("mapStyle").value = "esri"; await applyMap(); }
+      $("terrain").checked = false; await applyTerrain();
+    }
+    closeSettings();
   });
 
   // ---------- Timer: polls only while open, visible, and not paused ----------
@@ -1045,11 +1221,27 @@ const AircraftModels = (() => {
   $("altScale").addEventListener("change", () => { state.altScale = +$("altScale").value; });
   $("showGround").addEventListener("change", () => { state.lastFetch = 0; restartTimer(true); });
 
+  // ---------- Server config: an ion token stored as a Worker secret, so terrain works without pasting a key ----------
+  async function loadConfig() {
+    try {
+      const r = await fetch("/api/config", { cache: "no-store" });
+      if (!r.ok) return;
+      const cfg = await r.json();
+      if (cfg.ionToken && !state.token) { state.token = cfg.ionToken; state.tokenFromServer = true; C.Ion.defaultAccessToken = cfg.ionToken; }
+    } catch {}
+  }
+
   // ---------- Start ----------
-  { const ms = store.get("mapStyle", "esri"); $("mapStyle").value = (ms.startsWith("ion") && !state.token) || !$("mapStyle").querySelector(`option[value="${ms}"]`) ? "esri" : ms; }
-  $("terrain").checked = !!state.token && store.get("terrain", true);
-  (async () => { if ($("mapStyle").value !== store.get("mapStyle", "esri") || $("mapStyle").value.startsWith("ion")) await applyMap(); if (state.token) await applyTerrain(); locate(); })();
-  window.__overhead = { viewer, state, AM }; // handy for debugging in the console
+  (async () => {
+    await loadConfig();
+    const ms = store.get("mapStyle", "esri");
+    $("mapStyle").value = (ms.startsWith("ion") && !state.token) || !$("mapStyle").querySelector(`option[value="${ms}"]`) ? "esri" : ms;
+    $("terrain").checked = !!state.token && store.get("terrain", true);
+    if ($("mapStyle").value.startsWith("ion")) await applyMap();
+    if (state.token) await applyTerrain();
+    locate();
+  })();
+  window.__overhead = { viewer, state, AM, person: () => person, enableMotion }; // handy for debugging in the console
 })();
 </script>
 </body>

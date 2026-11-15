@@ -3,6 +3,7 @@
 //   GET /api/aircraft?lat=..&lon=..&nm=..   live aircraft near a point (ADS-B Exchange v2 format)
 //   GET /api/adsbdb/aircraft/{hex}          aircraft details + photo (adsbdb)
 //   GET /api/adsbdb/callsign/{callsign}     flight route (adsbdb)
+//   GET /api/config                         browser config (Cesium ion token from the ION_TOKEN secret)
 // Everything else falls through to the static assets.
 
 const FEEDS = [
@@ -56,6 +57,9 @@ export default {
     try {
       if (url.pathname === "/api/aircraft") return await aircraft(url);
       if (url.pathname.startsWith("/api/adsbdb/")) return await adsbdb(url);
+      // Public, browser-side config. ION_TOKEN is a Worker secret (set in the Cloudflare dashboard, not in git);
+      // Cesium ion tokens are meant for browsers, so restrict it to this site's URL in the ion dashboard.
+      if (url.pathname === "/api/config") return json({ ionToken: env.ION_TOKEN || null }, 200, { "Cache-Control": "no-store" });
       if (url.pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
     } catch (e) {
       return json({ error: e.message }, 500);
