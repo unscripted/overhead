@@ -78,6 +78,8 @@
   .tool { width:44px; height:44px; padding:0; display:grid; place-items:center; border-radius:12px;
     background:rgba(24,27,34,.9); border:1px solid var(--line); color:var(--text); }
   #compass { transition:transform .1s linear; }
+  #rotateBtn[aria-pressed="true"] { background:#ffb020; border-color:#ffb020; color:#1a1300; }
+  body.person #rotateBtn { display:none; }
   #personBtn[aria-pressed="true"] { background:#3ea6ff; border-color:#3ea6ff; color:#06121f; }
   #hud { position:absolute; z-index:6; left:10px; bottom:46px; max-width:calc(100% - 76px); display:none;
     background:rgba(24,27,34,.9); border:1px solid var(--line); border-radius:10px; padding:6px 10px; font-size:12px; line-height:1.45; }
@@ -120,6 +122,9 @@
       </button>
       <button id="homeBtn" class="tool" aria-label="Back to my location" title="Back to me" hidden>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4" fill="#3ea6ff" stroke="#fff"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+      </button>
+      <button id="rotateBtn" class="tool" aria-pressed="false" aria-label="Rotate mode: one-finger drag rotates and tilts the view" title="Rotate mode">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
       </button>
       <button id="northBtn" class="tool" aria-label="Reset to north up" title="North up">
         <svg id="compass" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l4 10h-8z" fill="#ff5a5a"/><path d="M12 22l-4-10h8z" fill="#c9ced8"/><text x="12" y="9.6" text-anchor="middle" font-size="5.5" font-weight="700" fill="#fff" font-family="system-ui">N</text></svg>
@@ -838,9 +843,22 @@ const AircraftModels = (() => {
   function currentHpr() {
     return new C.HeadingPitchRange(camera.heading, camera.pitch, C.Cartesian3.distance(camera.positionWC, state.pivot));
   }
+  // Pan mode (default): one-finger / left drag pans the map (handled below).
+  // Rotate mode: one-finger / left drag orbits around the center (heading + tilt).
+  // Always: pinch or scroll zooms; two-finger twist rotates and two-finger slide tilts (handled below);
+  // on a computer, Shift+drag rotates and Ctrl+drag or middle-drag tilts.
+  let rotateMode = !!store.get("rotateMode", false);
   function setOrbitControls(on) {
-    // One-finger / left drag pans (handled below); pinch or scroll zooms; two-finger twist/drag (or Ctrl+drag) rotates and tilts.
-    ctrl.enableZoom = ctrl.enableTilt = on; ctrl.enableRotate = false; ctrl.enableTranslate = false; ctrl.enableLook = false;
+    const E = C.CameraEventType, M = C.KeyboardEventModifier;
+    ctrl.enableZoom = ctrl.enableTilt = ctrl.enableRotate = on;
+    ctrl.enableTranslate = false; ctrl.enableLook = false;
+    ctrl.rotateEventTypes = rotateMode ? [E.LEFT_DRAG, { eventType: E.LEFT_DRAG, modifier: M.SHIFT }] : [{ eventType: E.LEFT_DRAG, modifier: M.SHIFT }];
+    ctrl.tiltEventTypes = [E.MIDDLE_DRAG, { eventType: E.LEFT_DRAG, modifier: M.CTRL }, { eventType: E.RIGHT_DRAG, modifier: M.CTRL }]; // pinch handled by us
+  }
+  function setRotateMode(on) {
+    rotateMode = on; store.set("rotateMode", on);
+    $("rotateBtn").setAttribute("aria-pressed", String(on));
+    if (!skyOn) setOrbitControls(true);
   }
   function goView(view, duration = 1.8) {
     if (!state.pivot) return;
@@ -862,7 +880,7 @@ const AircraftModels = (() => {
   let panStart = null, panned = false;
   const pickGround = pos => { const ray = camera.getPickRay(pos); return (ray && scene.globe.pick(ray, scene)) || camera.pickEllipsoid(pos); };
   const isOrbitLocked = () => !skyOn && !isFollowing() && !C.Matrix4.equals(camera.transform, C.Matrix4.IDENTITY);
-  panHandler.setInputAction(e => { panStart = isOrbitLocked() ? pickGround(e.position) : null; }, C.ScreenSpaceEventType.LEFT_DOWN);
+  panHandler.setInputAction(e => { panStart = isOrbitLocked() && !rotateMode ? pickGround(e.position) : null; }, C.ScreenSpaceEventType.LEFT_DOWN);
   panHandler.setInputAction(e => {
     if (!panStart || !isOrbitLocked()) return;
     const p1 = pickGround(e.endPosition); if (!p1) return;
@@ -884,6 +902,27 @@ const AircraftModels = (() => {
   };
   panHandler.setInputAction(endPan, C.ScreenSpaceEventType.LEFT_UP);
   panHandler.setInputAction(() => { panStart = null; }, C.ScreenSpaceEventType.PINCH_START); // two fingers: rotate/zoom, not pan
+  // Two-finger twist rotates (like a map app); sliding both fingers up/down tilts. Pinch distance still zooms (Cesium).
+  function twist(dAngle, dHeightPx) {
+    if (skyOn || C.Matrix4.equals(camera.transform, C.Matrix4.IDENTITY)) return;
+    const center = C.Matrix4.getTranslation(camera.transform, new C.Cartesian3());
+    const range = C.Cartesian3.distance(camera.positionWC, center);
+    const heading = camera.heading - dAngle;
+    const pitch = C.Math.clamp(camera.pitch - dHeightPx * 0.004, C.Math.toRadians(-89.9), C.Math.toRadians(-2));
+    camera.lookAtTransform(camera.transform, new C.HeadingPitchRange(heading, pitch, range));
+  }
+  panHandler.setInputAction(m => {
+    const a = m.angleAndHeight; if (!a) return;
+    let dA = a.endPosition.x - a.startPosition.x;
+    if (dA > Math.PI) dA -= 2 * Math.PI; else if (dA < -Math.PI) dA += 2 * Math.PI;
+    const dH = a.endPosition.y - a.startPosition.y;
+    twist(Math.abs(dA) > 0.002 ? dA : 0, Math.abs(dH) > 0.5 ? dH : 0);
+  }, C.ScreenSpaceEventType.PINCH_MOVE);
+  $("rotateBtn").addEventListener("click", () => {
+    setRotateMode(!rotateMode);
+    showMsg(rotateMode ? "Rotate mode: drag to rotate and tilt. Tap the button again to pan." : "Pan mode: drag to move the map. Twist two fingers to rotate.", 3500);
+  });
+  $("rotateBtn").setAttribute("aria-pressed", String(rotateMode));
   function resetPan() {
     if (state.home) state.pivot = state.home;
     const wasAway = !!state.center; state.center = null; panned = false; $("homeBtn").hidden = true;
@@ -1241,7 +1280,7 @@ const AircraftModels = (() => {
     if (state.token) await applyTerrain();
     locate();
   })();
-  window.__overhead = { viewer, state, AM, person: () => person, enableMotion }; // handy for debugging in the console
+  window.__overhead = { viewer, state, AM, person: () => person, enableMotion, twist, goView }; // test/debug hooks // handy for debugging in the console
 })();
 </script>
 </body>
