@@ -2,6 +2,8 @@
 
 Live aircraft around you on a 3D globe, at their real altitude, drawn as 3D models of each aircraft type.
 
+**Live:** https://overhead.matchbox-devops.workers.dev
+
 - **Live positions and aircraft types:** [airplanes.live](https://airplanes.live), with [adsb.lol](https://adsb.lol) and [adsb.fi](https://adsb.fi) as fallbacks.
 - **Photo, owner and route for the plane you tap:** [adsbdb](https://www.adsbdb.com).
 - **Globe:** [CesiumJS](https://cesium.com/platform/cesiumjs/), with free Esri satellite imagery or OpenStreetMap. Terrain and HD imagery are optional and use a free [Cesium ion](https://ion.cesium.com) token, entered in the app's ⚙ Settings.
@@ -23,7 +25,7 @@ Everything is one free Cloudflare Worker:
 2. Connect GitHub if asked, then pick **unscripted/overhead**.
 3. Keep the detected settings (deploy command `npx wrangler deploy`) and select **Deploy**.
 
-Every push to `main` then redeploys automatically. The app lives at `https://overhead.<your-subdomain>.workers.dev`.
+Every push to `main` redeploys automatically (Cloudflare account: Matchbox DevOps).
 
 ## Local development
 
