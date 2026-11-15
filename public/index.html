@@ -8,11 +8,12 @@
   Overhead 3D: live aircraft near you on a 3D globe, at their reported altitude.
 
   Data
-  - Positions: OpenSky Network REST API (anonymous: 400 credits/day; each refresh here = 1 credit).
-  - Aircraft type, registration, photo, route: adsbdb.com (free, no key). If it can't be reached,
-    the app estimates the aircraft class from OpenSky's emitter category, speed and altitude.
-  - Satellite imagery + world terrain: Cesium ion (free Community account token, entered in ⚙ Settings;
-    stored only in this browser). Without a token you get a dark street map on a smooth globe.
+  - Positions + aircraft type: community ADS-B feeds (airplanes.live, then adsb.lol, then adsb.fi).
+    Browsers block these when called straight from a web page, so the Cloudflare Worker in
+    src/worker.js relays them at /api/aircraft (same origin as this page).
+  - Photo, owner and route for the plane you tap: adsbdb.com, relayed at /api/adsbdb/.
+  - Map: Esri World Imagery (free, no key) or OpenStreetMap. Optional HD imagery + world terrain
+    from Cesium ion (free Community token, entered in ⚙ Settings; stored only in this browser).
 
   Behavior
   - Polls ONLY while this page is open, visible, and not paused.
@@ -20,8 +21,8 @@
   - 3D aircraft are generated in the browser from type data (real length/wingspan, wing, tail and
     engine layout, airline tail color). They scale up when far away so you can still see them.
 
-  Hosting: serve over HTTPS (GitHub Pages, Cloudflare Pages, etc.). Opening the file directly
-  from disk leaves the globe blank and blocks location.
+  Hosting: deployed as a Cloudflare Worker (see wrangler.jsonc). Opening the file directly from
+  disk leaves the globe blank and blocks location.
 -->
 <script>window.CESIUM_BASE_URL = "https://cdn.jsdelivr.net/npm/cesium@1.147.0/Build/Cesium/";</script>
 <script src="https://cdn.jsdelivr.net/npm/cesium@1.147.0/Build/Cesium/Cesium.js"></script>
@@ -34,7 +35,7 @@
   #app { display:flex; flex-direction:column; height:100%; }
   header { display:flex; align-items:center; gap:10px; padding:10px 12px;
     padding-top:calc(10px + env(safe-area-inset-top)); background:var(--panel); border-bottom:1px solid var(--line); }
-  header h1 { font-size:16px; margin:0; flex:1; }
+  header h1 { font-size:16px; margin:0; flex:1; white-space:nowrap; }
   #status { font-size:12px; color:var(--muted); text-align:right; }
   #status .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#555; margin-right:5px; vertical-align:middle; }
   #status .dot.live { background:#2ecc71; } #status .dot.paused { background:var(--accent); } #status .dot.err { background:#e74c3c; }
@@ -110,7 +111,7 @@
     <div id="settings" class="card" role="dialog" aria-labelledby="setTitle">
       <button class="close" id="settingsClose" aria-label="Close settings">✕</button>
       <h2 id="setTitle">Settings</h2>
-      <label for="ionToken" style="font-size:13px">Cesium ion access token (for satellite imagery and terrain)</label>
+      <label for="ionToken" style="font-size:13px">Cesium ion access token (for terrain and HD imagery)</label>
       <input id="ionToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste token">
       <p>Free for personal use: create an account at <a href="https://ion.cesium.com/signup" target="_blank" rel="noopener">ion.cesium.com</a>, then copy a token from Access Tokens. The token is saved only in this browser. In the ion dashboard, restrict the token to your site's URL.</p>
       <div class="row">
@@ -122,7 +123,7 @@
 
   <div id="controls">
     <label>Map
-      <select id="mapStyle"><option value="dark" selected>Dark map</option><option value="sat">Satellite</option><option value="satlabels">Satellite + labels</option></select>
+      <select id="mapStyle"><option value="esri" selected>Satellite</option><option value="dark">Dark map</option><option value="osm">Street map</option><option value="ionsat">HD satellite (ion)</option><option value="ionlabels">HD satellite + labels (ion)</option></select>
     </label>
     <label><input type="checkbox" id="terrain"> Terrain</label>
     <label>Radius
@@ -423,7 +424,6 @@ const AircraftModels = (() => {
    App
    ===================================================================================== */
 (() => {
-  const API = "https://opensky-network.org/api/states/all";
   const ADSBDB = "https://api.adsbdb.com/v0";
   const M_TO_FT = 3.28084, MS_TO_KT = 1.94384, MS_TO_FPM = 196.850, KM_PER_MI = 1.609344, TRAIL_POINTS = 20;
   const $ = id => document.getElementById(id);
@@ -433,23 +433,30 @@ const AircraftModels = (() => {
 
   const state = {
     me: null, pivot: null, planes: new Map(), entities: new Map(), selected: null,
-    paused: false, timer: null, inFlight: false, lastFetch: 0, credits: null,
+    paused: false, timer: null, inFlight: false, lastFetch: 0, lastSource: null,
     altScale: 1, view: "overview", meEntity: null, ringEntity: null,
     token: store.get("ionToken", ""),
   };
 
   // ---------- Globe ----------
-  const cartoLayer = () => new C.ImageryLayer(new C.UrlTemplateImageryProvider({
-    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", subdomains: ["a", "b", "c", "d"], maximumLevel: 18,
-    credit: new C.Credit("© OpenStreetMap contributors © CARTO", true) }));
+  // Free base layers (no key). "Dark" is OpenStreetMap dimmed so aircraft stand out.
+  const freeLayer = style => {
+    const osm = () => new C.UrlTemplateImageryProvider({ url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", maximumLevel: 19,
+      credit: new C.Credit('© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', true) });
+    if (style === "osm") return new C.ImageryLayer(osm());
+    if (style === "dark") return new C.ImageryLayer(osm(), { brightness: 0.42, contrast: 1.25, saturation: 0.15, gamma: 0.9 });
+    return new C.ImageryLayer(new C.UrlTemplateImageryProvider({
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", maximumLevel: 19,
+      credit: new C.Credit("Imagery © Esri, Vantor, Earthstar Geographics, and the GIS User Community", true) }));
+  };
   C.Ion.defaultAccessToken = state.token || undefined;
   const viewer = new C.Viewer("globe", {
-    baseLayer: cartoLayer(), terrainProvider: new C.EllipsoidTerrainProvider(),
+    baseLayer: freeLayer(store.get("mapStyle", "esri")), terrainProvider: new C.EllipsoidTerrainProvider(),
     baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false, navigationHelpButton: false,
     animation: false, timeline: false, fullscreenButton: false, infoBox: false, selectionIndicator: false,
   });
   const scene = viewer.scene, camera = viewer.camera, ctrl = scene.screenSpaceCameraController;
-  viewer.creditDisplay.addStaticCredit(new C.Credit("Flight data: OpenSky Network · Aircraft info: adsbdb", true));
+  viewer.creditDisplay.addStaticCredit(new C.Credit("Flight data: airplanes.live / adsb.lol / adsb.fi · Aircraft info: adsbdb", true));
   scene.globe.enableLighting = false;
   scene.fog.enabled = true;
   ctrl.minimumZoomDistance = 150;
@@ -500,68 +507,61 @@ const AircraftModels = (() => {
     GTI: "1f3a5f", ABX: "a50034", ACA: "d22630", WJA: "00a2b1", BAW: "1a2e5a", VIR: "c4002b", DLH: "05164d", AFR: "002157", KLM: "00a1de",
     UAE: "d71921", QTR: "5c0632", ETD: "8e7444", AMX: "0b2343", VOI: "a5007d", SKW: "1f3a5f", RPA: "1f3a5f", BRE: "6f7b8a" };
 
-  // OpenSky state vector -> plane. geo_altitude (GPS height above the WGS84 ellipsoid) matches Cesium's frame.
-  function parseState(s) {
-    const altM = s[13] ?? s[7];
+  // ADS-B Exchange v2-style record (airplanes.live / adsb.lol / adsb.fi) -> plane.
+  // alt_geom is GPS (geometric) altitude in feet; alt_baro is "ground" when on the ground.
+  const CAT = { A1: 2, A2: 3, A3: 4, A4: 5, A5: 6, A6: 7, A7: 8, B1: 9, B4: 12, B6: 14 };
+  function parseAc(a) {
+    const onGround = a.alt_baro === "ground" || a.ground === true;
+    const altFt = onGround ? 0 : (typeof a.alt_geom === "number" ? a.alt_geom : typeof a.alt_baro === "number" ? a.alt_baro : null);
+    const fpm = a.geom_rate ?? a.baro_rate ?? null;
+    const hex = String(a.hex || "").replace(/^~/, "").toLowerCase();
     return {
-      icao24: s[0], callsign: (s[1] || "").trim() || s[0].toUpperCase(), country: s[2],
-      lon: s[5], lat: s[6], altM: altM ?? null, altFt: altM != null ? altM * M_TO_FT : null,
-      onGround: s[8], speedMs: s[9], speedKt: s[9] != null ? s[9] * MS_TO_KT : null,
-      heading: s[10], vrateMs: s[11], vrateFpm: s[11] != null ? s[11] * MS_TO_FPM : null, squawk: s[14], category: s[17] ?? 0,
+      icao24: hex, callsign: (a.flight || "").trim() || (a.r || hex.toUpperCase()), country: "",
+      lat: a.lat ?? a.lastPosition?.lat, lon: a.lon ?? a.lastPosition?.lon,
+      altFt, altM: altFt != null ? altFt / M_TO_FT : null, onGround,
+      speedKt: a.gs ?? null, speedMs: a.gs != null ? a.gs / MS_TO_KT : null,
+      heading: a.track ?? a.true_heading ?? a.mag_heading ?? null,
+      vrateFpm: fpm, vrateMs: fpm != null ? fpm / MS_TO_FPM : null,
+      squawk: a.squawk, category: CAT[a.category] ?? 0,
+      typeCode: a.t || null, reg: a.r || null, desc: a.desc || null, operator: a.ownOp || null,
     };
   }
 
-  // ---------- Aircraft type lookup (adsbdb) ----------
-  const meta = new Map(Object.entries(store.get("meta", {})));
-  let metaQueue = [], metaActive = 0, metaFails = 0, metaDisabled = false, metaSaveT;
-  const saveMeta = () => { clearTimeout(metaSaveT); metaSaveT = setTimeout(() => {
-    const entries = [...meta.entries()].filter(([, v]) => v.done).slice(-4000); store.set("meta", Object.fromEntries(entries)); }, 2000); };
-  function wantMeta(id) {
-    if (metaDisabled || meta.has(id)) return;
-    meta.set(id, { pending: true }); metaQueue.push(id); pumpMeta();
-  }
-  function pumpMeta() {
-    while (metaActive < 2 && metaQueue.length && !metaDisabled) {
-      const id = metaQueue.shift();
-      if (!state.planes.has(id)) { meta.delete(id); continue; }
-      metaActive++;
-      fetchMeta(id).finally(() => { metaActive--; setTimeout(pumpMeta, 120); });
+  // ---------- Aircraft details, photo and route (adsbdb), fetched only for the plane you tap ----------
+  // Same-origin relay first (Cloudflare Worker), then adsbdb directly.
+  async function adsbdb(path) {
+    for (const url of [`/api/adsbdb/${path}`, `${ADSBDB}/${path}`]) {
+      try { const r = await fetch(url); if (r.ok) return await r.json(); if (r.status === 404 && url.startsWith("/api")) { const t = r.headers.get("content-type") || ""; if (t.includes("json")) return null; } } catch {}
     }
+    return null;
   }
+  const meta = new Map();
   async function fetchMeta(id) {
+    if (meta.has(id)) return;
+    meta.set(id, { pending: true });
     try {
-      const r = await fetch(`${ADSBDB}/aircraft/${encodeURIComponent(id)}`);
-      let m;
-      if (r.status === 404) m = { done: true, none: true };
-      else if (r.ok) {
-        const a = (await r.json()).response.aircraft;
-        m = { done: true, icaoType: a.icao_type, type: a.type, mfr: a.manufacturer, reg: a.registration, owner: a.registered_owner, photo: a.url_photo_thumbnail };
-      } else throw new Error("HTTP " + r.status);
-      metaFails = 0; meta.set(id, m); saveMeta();
-      const p = state.planes.get(id); if (p) { styleEntity(p); renderList(); if (state.selected === id) renderDetail(); }
-    } catch {
-      meta.delete(id);
-      if (++metaFails >= 4) { metaDisabled = true; console.warn("adsbdb unreachable; using estimated aircraft types."); }
-    }
+      const j = await adsbdb(`aircraft/${encodeURIComponent(id)}`);
+      const a = j?.response?.aircraft; if (!a) throw new Error("none");
+      meta.set(id, { done: true, icaoType: a.icao_type, type: a.type, mfr: a.manufacturer, reg: a.registration, owner: a.registered_owner, photo: a.url_photo_thumbnail });
+    } catch { meta.set(id, { done: true, none: true }); }
+    const p = state.planes.get(id); if (p) { styleEntity(p); renderList(); if (state.selected === id) renderDetail(); }
   }
   const routes = new Map();
   async function fetchRoute(cs) {
-    if (metaDisabled || routes.has(cs) || !/^[A-Z]{3}\d/.test(cs)) return;
+    if (routes.has(cs) || !/^[A-Z]{3}\d/.test(cs)) return;
     routes.set(cs, null);
     try {
-      const r = await fetch(`${ADSBDB}/callsign/${encodeURIComponent(cs)}`);
-      if (!r.ok) return;
-      const f = (await r.json()).response.flightroute;
+      const f = (await adsbdb(`callsign/${encodeURIComponent(cs)}`))?.response?.flightroute; if (!f) return;
       routes.set(cs, { from: f.origin, to: f.destination, airline: f.airline?.name });
       if (state.planes.get(state.selected)?.callsign === cs) renderDetail();
     } catch {}
   }
 
-  // Which model to show: known ICAO type → exact; else OpenSky emitter category; else speed/altitude guess.
+  // Which model to show: known ICAO type → exact; else ADS-B emitter category; else speed/altitude guess.
   function resolveType(p) {
-    const m = meta.get(p.icao24);
-    if (m?.icaoType && AM.T[m.icaoType]) { const [fam, L, b] = AM.T[m.icaoType]; return { fam, L, b, code: m.icaoType, exact: true }; }
-    const pick = code => { const [fam, L, b] = AM.T[code]; return { fam, L, b, code: m?.icaoType || null, exact: false }; };
+    const code = p.typeCode || meta.get(p.icao24)?.icaoType || null;
+    if (code && AM.T[code]) { const [fam, L, b] = AM.T[code]; return { fam, L, b, code, exact: true }; }
+    const pick = c => { const [fam, L, b] = AM.T[c]; return { fam, L, b, code, exact: false }; };
     switch (p.category) {
       case 2: return pick("C172");
       case 3: return pick((p.speedKt ?? 0) > 260 ? "CRJ9" : "AT72");
@@ -593,7 +593,7 @@ const AircraftModels = (() => {
   const hprScratch = new C.HeadingPitchRoll();
   function attitude(p, pos) {
     const pitch = p.onGround || !p.speedMs ? 0 : Math.atan2(p.vrateMs || 0, Math.max(p.speedMs, 30));
-    // Cesium heading 0 points the model's +X (nose) east; OpenSky track is clockwise from north, so subtract 90°.
+    // Cesium heading 0 points the model's +X (nose) east; ADS-B track is clockwise from north, so subtract 90°.
     hprScratch.heading = C.Math.toRadians((p.heading || 0) + (p.turnRate || 0) * Math.min((Date.now() - p.receivedAt) / 1000, 60)) - Math.PI / 2;
     hprScratch.pitch = pitch; hprScratch.roll = p.onGround ? 0 : (p.roll || 0);
     return C.Transforms.headingPitchRollQuaternion(pos, hprScratch);
@@ -652,36 +652,57 @@ const AircraftModels = (() => {
   }
 
   // ---------- Fetch (only while visible & not paused) ----------
+  // Tries your proxy first (if set in Settings), then each community ADS-B feed directly.
+  function sources() {
+    const { lat, lon } = state.me, nm = Math.ceil(+$("radius").value * 0.869 + 1), la = lat.toFixed(4), lo = lon.toFixed(4);
+    const list = [];
+    list.push({ name: "proxy", url: `/api/aircraft?lat=${la}&lon=${lo}&nm=${nm}` });
+    list.push({ name: "airplanes.live", url: `https://api.airplanes.live/v2/point/${la}/${lo}/${nm}` },
+      { name: "adsb.lol", url: `https://api.adsb.lol/v2/lat/${la}/lon/${lo}/dist/${nm}` },
+      { name: "adsb.fi", url: `https://opendata.adsb.fi/api/v2/lat/${la}/lon/${lo}/dist/${nm}` });
+    // Try whichever worked last time first.
+    const i = list.findIndex(s => s.name === state.lastSource);
+    if (i > 0) list.unshift(...list.splice(i, 1));
+    return list;
+  }
+  async function getJson(url) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 9000);
+    try {
+      const r = await fetch(url, { cache: "no-store", signal: ctl.signal });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return { json: await r.json(), via: r.headers.get("X-Upstream") };
+    } finally { clearTimeout(t); }
+  }
   async function poll() {
     if (!state.me || state.paused || document.hidden || state.inFlight) return;
     state.inFlight = true;
-    const b = bbox(state.me, +$("radius").value);
-    const url = `${API}?lamin=${b.lamin.toFixed(4)}&lomin=${b.lomin.toFixed(4)}&lamax=${b.lamax.toFixed(4)}&lomax=${b.lomax.toFixed(4)}&extended=1`;
+    let ok = false;
     try {
-      const res = await fetch(url, { cache: "no-store" });
-      const rem = res.headers.get("X-Rate-Limit-Remaining"); if (rem != null) state.credits = +rem;
-      if (res.status === 429) {
-        const wait = +res.headers.get("X-Rate-Limit-Retry-After-Seconds") || 0;
-        setStatus("err", "Daily limit hit");
-        showMsg(`OpenSky's free daily limit is used up.${wait ? ` Try again in about ${Math.ceil(wait / 3600)} h.` : ""}`);
-        stopTimer(); return;
+      for (const src of sources()) {
+        try {
+          const { json, via } = await getJson(src.url);
+          const list = json.ac || json.aircraft;
+          if (!Array.isArray(list)) throw new Error("bad response");
+          state.lastSource = src.name; ok = true;
+          hideMsg(); state.lastFetch = Date.now();
+          ingest(list);
+          const t = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+          setStatus("live", `${state.planes.size} aircraft · ${t}`); $("status").title = `Data via ${via || src.name}`;
+          break;
+        } catch { /* try the next source */ }
       }
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const data = await res.json();
-      hideMsg(); state.lastFetch = Date.now();
-      ingest(data.states || []);
-      const t = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
-      setStatus("live", `${state.planes.size} aircraft · ${t}${state.credits != null ? ` · ${state.credits} credits left` : ""}`);
-    } catch (e) {
-      setStatus("err", "Fetch failed");
-      showMsg(`Couldn't reach OpenSky (${esc(e.message)}). If this keeps happening, the browser may be blocking the request; see the notes at the top of the file.`, 8000);
     } finally { state.inFlight = false; }
+    if (!ok) {
+      setStatus("err", "No flight data");
+      showMsg("Couldn't load flight data. The flight feeds may be down, or this page isn't running on the Cloudflare Worker that relays them. Trying again shortly.", 10000);
+    }
   }
 
   function ingest(states) {
     const showGround = $("showGround").checked, radiusKm = +$("radius").value * KM_PER_MI, seen = new Set(), now = Date.now();
     for (const s of states) {
-      const p = parseState(s);
+      const p = parseAc(s);
+      if (!p.icao24) continue;
       if (p.lat == null || p.lon == null) continue;
       if (p.onGround && !showGround) continue;
       p.distKm = haversineKm(state.me, p);
@@ -708,7 +729,6 @@ const AircraftModels = (() => {
       state.planes.set(p.icao24, p);
       if (!state.entities.has(p.icao24)) state.entities.set(p.icao24, makeEntity(p.icao24));
       styleEntity(p);
-      wantMeta(p.icao24);
     }
     for (const id of [...state.planes.keys()]) if (!seen.has(id)) { removeEntity(id); state.planes.delete(id); }
     if (state.selected && !state.planes.has(state.selected)) select(null);
@@ -734,7 +754,7 @@ const AircraftModels = (() => {
     const prev = state.selected; state.selected = id || null;
     for (const k of [prev, state.selected]) { const p = k && state.planes.get(k); if (p) styleEntity(p); }
     if (!id && isFollowing()) stopFollow();
-    const p = id && state.planes.get(id); if (p) fetchRoute(p.callsign);
+    const p = id && state.planes.get(id); if (p) { fetchRoute(p.callsign); fetchMeta(id); }
     renderList(); renderDetail();
   }
   viewer.selectedEntityChanged.addEventListener(ent => {
@@ -751,7 +771,9 @@ const AircraftModels = (() => {
     const apt = a => a ? `${esc(a.iata_code || a.icao_code)}${a.municipality ? ` (${esc(a.municipality)})` : ""}` : "";
     $("dTitle").textContent = p.callsign;
     $("dSub").innerHTML = m.type ? `${esc(m.mfr || "")} ${esc(m.type)}${m.icaoType ? ` · ${esc(m.icaoType)}` : ""}`
-      : `${esc(AM.CLASS_NAME[t.fam])} <span title="Type not found; model estimated">(estimated)</span>`;
+      : p.desc ? `${esc(p.desc)}${p.typeCode ? ` · ${esc(p.typeCode)}` : ""}`
+      : t.exact ? `${esc(AM.CLASS_NAME[t.fam])} · ${esc(t.code)}`
+      : `${esc(AM.CLASS_NAME[t.fam])} <span title="Type not reported; model estimated">(estimated)</span>`;
     const img = $("dPhoto");
     if (m.photo && /^https:\/\//.test(m.photo)) { img.src = m.photo; img.alt = `Photo of ${m.reg || p.callsign}`; img.hidden = false; img.onerror = () => (img.hidden = true); }
     else img.hidden = true;
@@ -761,8 +783,8 @@ const AircraftModels = (() => {
       <dt>Altitude</dt><dd>${p.onGround ? "On ground" : fmt(p.altFt) + " ft (GPS)"}</dd>
       <dt>Speed</dt><dd>${fmt(p.speedKt)} kt</dd><dt>Heading</dt><dd>${fmt(p.heading)}°</dd>
       <dt>Vertical</dt><dd>${climb}</dd><dt>Distance</dt><dd>${fmt(p.distKm / KM_PER_MI, 1)} mi</dd>
-      ${m.reg ? `<dt>Registration</dt><dd>${esc(m.reg)}</dd>` : ""}
-      ${m.owner ? `<dt>Owner</dt><dd>${esc(m.owner)}</dd>` : ""}
+      ${(m.reg || p.reg) ? `<dt>Registration</dt><dd>${esc(m.reg || p.reg)}</dd>` : ""}
+      ${(m.owner || p.operator) ? `<dt>Operator</dt><dd>${esc(m.owner || p.operator)}</dd>` : ""}
       <dt>Squawk</dt><dd>${esc(p.squawk || "—")}</dd><dt>ICAO24</dt><dd>${esc(p.icao24)}</dd>
       <dt>More</dt><dd><a href="https://www.flightaware.com/live/flight/${encodeURIComponent(cs)}" target="_blank" rel="noopener">FlightAware</a> ·
         <a href="https://globe.adsbexchange.com/?icao=${encodeURIComponent(p.icao24)}" target="_blank" rel="noopener">ADS-B Exchange</a></dd>`;
@@ -885,17 +907,17 @@ const AircraftModels = (() => {
   });
 
   // ---------- Imagery & terrain (Cesium ion) ----------
-  const needToken = () => { openSettings(); showMsg("Satellite imagery and terrain need a free Cesium ion token. Add one in Settings.", 6000); };
+  const needToken = () => { openSettings(); showMsg("Terrain and HD imagery need a free Cesium ion token. Add one in Settings.", 6000); };
   async function applyMap() {
-    const style = $("mapStyle").value;
-    if (style !== "dark" && !state.token) { $("mapStyle").value = "dark"; store.set("mapStyle", "dark"); return needToken(); }
+    const style = $("mapStyle").value, ion = style.startsWith("ion");
+    if (ion && !state.token) { $("mapStyle").value = store.get("mapStyle", "esri"); return needToken(); }
     store.set("mapStyle", style);
     try {
-      const layer = style === "dark" ? cartoLayer() : C.ImageryLayer.fromProviderAsync(C.createWorldImageryAsync({
-        style: style === "satlabels" ? C.IonWorldImageryStyle.AERIAL_WITH_LABELS : C.IonWorldImageryStyle.AERIAL }));
+      const layer = !ion ? freeLayer(style) : C.ImageryLayer.fromProviderAsync(C.createWorldImageryAsync({
+        style: style === "ionlabels" ? C.IonWorldImageryStyle.AERIAL_WITH_LABELS : C.IonWorldImageryStyle.AERIAL }));
       viewer.imageryLayers.removeAll(true); viewer.imageryLayers.add(layer);
-      layer.errorEvent?.addEventListener(() => showMsg("Couldn't load satellite imagery. Check your Cesium ion token.", 6000));
-    } catch { showMsg("Couldn't load satellite imagery. Check your Cesium ion token.", 6000); }
+      layer.errorEvent?.addEventListener(() => showMsg("Couldn't load HD imagery. Check your Cesium ion token.", 6000));
+    } catch { showMsg("Couldn't load that map. Check your Cesium ion token.", 6000); }
   }
   async function applyTerrain() {
     const on = $("terrain").checked;
@@ -927,11 +949,12 @@ const AircraftModels = (() => {
     state.token = $("ionToken").value.trim(); store.set("ionToken", state.token);
     C.Ion.defaultAccessToken = state.token || undefined;
     closeSettings();
-    if (state.token) { if ($("mapStyle").value === "dark") $("mapStyle").value = "sat"; $("terrain").checked = true; await applyMap(); await applyTerrain(); showMsg("Token saved. Satellite imagery and terrain are on.", 4000); }
+    if (state.token) { $("terrain").checked = true; await applyTerrain(); showMsg("Token saved. Terrain is on, and HD imagery is available under Map.", 5000); }
   });
   $("clearToken").addEventListener("click", async () => {
     state.token = ""; store.set("ionToken", ""); C.Ion.defaultAccessToken = undefined; $("ionToken").value = "";
-    $("mapStyle").value = "dark"; $("terrain").checked = false; await applyMap(); await applyTerrain(); closeSettings();
+    if ($("mapStyle").value.startsWith("ion")) { $("mapStyle").value = "esri"; await applyMap(); }
+    $("terrain").checked = false; await applyTerrain(); closeSettings();
   });
 
   // ---------- Timer: polls only while open, visible, and not paused ----------
@@ -960,9 +983,9 @@ const AircraftModels = (() => {
   $("showGround").addEventListener("change", () => { state.lastFetch = 0; restartTimer(true); });
 
   // ---------- Start ----------
-  $("mapStyle").value = state.token ? store.get("mapStyle", "sat") : "dark";
+  { const ms = store.get("mapStyle", "esri"); $("mapStyle").value = (ms.startsWith("ion") && !state.token) || !$("mapStyle").querySelector(`option[value="${ms}"]`) ? "esri" : ms; }
   $("terrain").checked = !!state.token && store.get("terrain", true);
-  (async () => { if (state.token) { await applyMap(); await applyTerrain(); } locate(); })();
+  (async () => { if ($("mapStyle").value !== store.get("mapStyle", "esri") || $("mapStyle").value.startsWith("ion")) await applyMap(); if (state.token) await applyTerrain(); locate(); })();
   window.__overhead = { viewer, state, AM }; // handy for debugging in the console
 })();
 </script>
