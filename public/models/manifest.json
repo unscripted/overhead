@@ -1,0 +1,1250 @@
+{
+ "version": 1,
+ "types": {
+  "A318": {
+   "gearLift": 3.14,
+   "tris": 16000,
+   "kb": 54
+  },
+  "A319": {
+   "gearLift": 3.14,
+   "tris": 16016,
+   "kb": 53
+  },
+  "A320": {
+   "gearLift": 3.14,
+   "tris": 16044,
+   "kb": 53
+  },
+  "A321": {
+   "gearLift": 3.14,
+   "tris": 16112,
+   "kb": 53
+  },
+  "A19N": {
+   "gearLift": 3.14,
+   "tris": 16560,
+   "kb": 55
+  },
+  "A20N": {
+   "gearLift": 3.14,
+   "tris": 16588,
+   "kb": 55
+  },
+  "A21N": {
+   "gearLift": 3.14,
+   "tris": 16656,
+   "kb": 55
+  },
+  "B736": {
+   "gearLift": 2.989,
+   "tris": 16544,
+   "kb": 55
+  },
+  "B737": {
+   "gearLift": 2.989,
+   "tris": 16564,
+   "kb": 55
+  },
+  "B738": {
+   "gearLift": 2.989,
+   "tris": 16608,
+   "kb": 54
+  },
+  "B739": {
+   "gearLift": 2.989,
+   "tris": 16628,
+   "kb": 54
+  },
+  "B37M": {
+   "gearLift": 2.989,
+   "tris": 16832,
+   "kb": 56
+  },
+  "B38M": {
+   "gearLift": 2.989,
+   "tris": 16860,
+   "kb": 56
+  },
+  "B39M": {
+   "gearLift": 2.989,
+   "tris": 16880,
+   "kb": 56
+  },
+  "B3XM": {
+   "gearLift": 2.989,
+   "tris": 16892,
+   "kb": 56
+  },
+  "BCS1": {
+   "gearLift": 2.942,
+   "tris": 16560,
+   "kb": 55
+  },
+  "BCS3": {
+   "gearLift": 2.942,
+   "tris": 16588,
+   "kb": 54
+  },
+  "B752": {
+   "gearLift": 2.989,
+   "tris": 16668,
+   "kb": 54
+  },
+  "B753": {
+   "gearLift": 2.989,
+   "tris": 16720,
+   "kb": 54
+  },
+  "A20": {
+   "gearLift": 3.14,
+   "tris": 16044,
+   "kb": 53
+  },
+  "K35R": {
+   "gearLift": 3.611,
+   "tris": 20384,
+   "kb": 63
+  },
+  "E3TF": {
+   "gearLift": 4.054,
+   "tris": 20412,
+   "kb": 63
+  },
+  "B703": {
+   "gearLift": 4.054,
+   "tris": 20412,
+   "kb": 63
+  },
+  "A332": {
+   "gearLift": 5.048,
+   "tris": 18080,
+   "kb": 57
+  },
+  "A333": {
+   "gearLift": 5.048,
+   "tris": 18120,
+   "kb": 57
+  },
+  "A338": {
+   "gearLift": 5.048,
+   "tris": 18464,
+   "kb": 58
+  },
+  "A339": {
+   "gearLift": 5.048,
+   "tris": 18504,
+   "kb": 58
+  },
+  "A359": {
+   "gearLift": 5.334,
+   "tris": 18888,
+   "kb": 59
+  },
+  "A35K": {
+   "gearLift": 5.334,
+   "tris": 18940,
+   "kb": 59
+  },
+  "B762": {
+   "gearLift": 4.502,
+   "tris": 17636,
+   "kb": 56
+  },
+  "B763": {
+   "gearLift": 4.502,
+   "tris": 18452,
+   "kb": 58
+  },
+  "B764": {
+   "gearLift": 4.502,
+   "tris": 17988,
+   "kb": 57
+  },
+  "B772": {
+   "gearLift": 5.54,
+   "tris": 17720,
+   "kb": 56
+  },
+  "B77L": {
+   "gearLift": 5.54,
+   "tris": 17992,
+   "kb": 57
+  },
+  "B773": {
+   "gearLift": 5.54,
+   "tris": 17796,
+   "kb": 56
+  },
+  "B77W": {
+   "gearLift": 5.54,
+   "tris": 18068,
+   "kb": 57
+  },
+  "B778": {
+   "gearLift": 5.549,
+   "tris": 18048,
+   "kb": 57
+  },
+  "B779": {
+   "gearLift": 5.549,
+   "tris": 18092,
+   "kb": 57
+  },
+  "B788": {
+   "gearLift": 5.164,
+   "tris": 17916,
+   "kb": 57
+  },
+  "B789": {
+   "gearLift": 5.164,
+   "tris": 17960,
+   "kb": 57
+  },
+  "B78X": {
+   "gearLift": 5.164,
+   "tris": 18004,
+   "kb": 57
+  },
+  "A306": {
+   "gearLift": 5.048,
+   "tris": 17888,
+   "kb": 57
+  },
+  "A30B": {
+   "gearLift": 5.048,
+   "tris": 17884,
+   "kb": 57
+  },
+  "A310": {
+   "gearLift": 5.048,
+   "tris": 17832,
+   "kb": 57
+  },
+  "KC46": {
+   "gearLift": 4.502,
+   "tris": 18420,
+   "kb": 58
+  },
+  "A343": {
+   "gearLift": 5.048,
+   "tris": 25332,
+   "kb": 73
+  },
+  "A346": {
+   "gearLift": 5.048,
+   "tris": 26316,
+   "kb": 75
+  },
+  "A388": {
+   "gearLift": 6.89,
+   "tris": 26436,
+   "kb": 76
+  },
+  "B744": {
+   "gearLift": 5.817,
+   "tris": 26516,
+   "kb": 76
+  },
+  "B748": {
+   "gearLift": 5.817,
+   "tris": 26500,
+   "kb": 77
+  },
+  "B74S": {
+   "gearLift": 5.817,
+   "tris": 25960,
+   "kb": 75
+  },
+  "MD11": {
+   "gearLift": 5.388,
+   "tris": 24426,
+   "kb": 72
+  },
+  "DC10": {
+   "gearLift": 5.388,
+   "tris": 23390,
+   "kb": 69
+  },
+  "L101": {
+   "gearLift": 5.388,
+   "tris": 23378,
+   "kb": 69
+  },
+  "E170": {
+   "gearLift": 2.468,
+   "tris": 16524,
+   "kb": 54
+  },
+  "E75L": {
+   "gearLift": 2.468,
+   "tris": 16536,
+   "kb": 54
+  },
+  "E75S": {
+   "gearLift": 2.468,
+   "tris": 16024,
+   "kb": 52
+  },
+  "E190": {
+   "gearLift": 2.468,
+   "tris": 16572,
+   "kb": 54
+  },
+  "E195": {
+   "gearLift": 2.468,
+   "tris": 16588,
+   "kb": 54
+  },
+  "E290": {
+   "gearLift": 2.468,
+   "tris": 16796,
+   "kb": 55
+  },
+  "E295": {
+   "gearLift": 2.468,
+   "tris": 16836,
+   "kb": 54
+  },
+  "A221": {
+   "gearLift": 3.034,
+   "tris": 16560,
+   "kb": 55
+  },
+  "A223": {
+   "gearLift": 3.034,
+   "tris": 16588,
+   "kb": 54
+  },
+  "SU95": {
+   "gearLift": 2.837,
+   "tris": 15744,
+   "kb": 52
+  },
+  "CRJ1": {
+   "gearLift": 2.139,
+   "tris": 15740,
+   "kb": 52
+  },
+  "CRJ2": {
+   "gearLift": 2.139,
+   "tris": 15740,
+   "kb": 52
+  },
+  "CRJ7": {
+   "gearLift": 2.139,
+   "tris": 16552,
+   "kb": 54
+  },
+  "CRJ9": {
+   "gearLift": 2.139,
+   "tris": 16580,
+   "kb": 53
+  },
+  "CRJX": {
+   "gearLift": 2.139,
+   "tris": 16600,
+   "kb": 53
+  },
+  "E135": {
+   "gearLift": 1.813,
+   "tris": 15716,
+   "kb": 51
+  },
+  "E145": {
+   "gearLift": 1.813,
+   "tris": 15740,
+   "kb": 51
+  },
+  "E35L": {
+   "gearLift": 1.813,
+   "tris": 15716,
+   "kb": 51
+  },
+  "B712": {
+   "gearLift": 2.663,
+   "tris": 15820,
+   "kb": 52
+  },
+  "MD81": {
+   "gearLift": 2.663,
+   "tris": 15876,
+   "kb": 51
+  },
+  "MD82": {
+   "gearLift": 2.663,
+   "tris": 15876,
+   "kb": 51
+  },
+  "MD83": {
+   "gearLift": 2.663,
+   "tris": 15876,
+   "kb": 51
+  },
+  "MD87": {
+   "gearLift": 2.663,
+   "tris": 15836,
+   "kb": 52
+  },
+  "MD88": {
+   "gearLift": 2.663,
+   "tris": 15876,
+   "kb": 51
+  },
+  "MD90": {
+   "gearLift": 2.663,
+   "tris": 15888,
+   "kb": 51
+  },
+  "DC93": {
+   "gearLift": 2.663,
+   "tris": 15812,
+   "kb": 52
+  },
+  "F100": {
+   "gearLift": 2.623,
+   "tris": 15788,
+   "kb": 52
+  },
+  "F70": {
+   "gearLift": 2.623,
+   "tris": 15756,
+   "kb": 52
+  },
+  "C25A": {
+   "gearLift": 1.162,
+   "tris": 13780,
+   "kb": 47
+  },
+  "C25B": {
+   "gearLift": 1.287,
+   "tris": 13784,
+   "kb": 47
+  },
+  "C25C": {
+   "gearLift": 1.457,
+   "tris": 14556,
+   "kb": 49
+  },
+  "C25M": {
+   "gearLift": 1.153,
+   "tris": 13780,
+   "kb": 47
+  },
+  "C510": {
+   "gearLift": 0.957,
+   "tris": 13776,
+   "kb": 47
+  },
+  "C525": {
+   "gearLift": 1.109,
+   "tris": 13780,
+   "kb": 47
+  },
+  "C550": {
+   "gearLift": 1.287,
+   "tris": 13784,
+   "kb": 47
+  },
+  "C560": {
+   "gearLift": 1.332,
+   "tris": 13788,
+   "kb": 47
+  },
+  "C56X": {
+   "gearLift": 1.413,
+   "tris": 14556,
+   "kb": 49
+  },
+  "C650": {
+   "gearLift": 1.511,
+   "tris": 13788,
+   "kb": 47
+  },
+  "C680": {
+   "gearLift": 1.734,
+   "tris": 13788,
+   "kb": 47
+  },
+  "C68A": {
+   "gearLift": 1.734,
+   "tris": 14556,
+   "kb": 49
+  },
+  "C700": {
+   "gearLift": 1.994,
+   "tris": 14556,
+   "kb": 49
+  },
+  "C750": {
+   "gearLift": 1.967,
+   "tris": 13788,
+   "kb": 47
+  },
+  "CL30": {
+   "gearLift": 1.868,
+   "tris": 13788,
+   "kb": 47
+  },
+  "CL35": {
+   "gearLift": 1.868,
+   "tris": 14556,
+   "kb": 49
+  },
+  "CL60": {
+   "gearLift": 1.868,
+   "tris": 13788,
+   "kb": 47
+  },
+  "GL5T": {
+   "gearLift": 2.637,
+   "tris": 14560,
+   "kb": 49
+  },
+  "GLEX": {
+   "gearLift": 2.709,
+   "tris": 14560,
+   "kb": 49
+  },
+  "GL6T": {
+   "gearLift": 2.709,
+   "tris": 14560,
+   "kb": 49
+  },
+  "GL7T": {
+   "gearLift": 3.022,
+   "tris": 14560,
+   "kb": 49
+  },
+  "GLF4": {
+   "gearLift": 2.405,
+   "tris": 14560,
+   "kb": 49
+  },
+  "GLF5": {
+   "gearLift": 2.628,
+   "tris": 14560,
+   "kb": 49
+  },
+  "GLF6": {
+   "gearLift": 2.718,
+   "tris": 14560,
+   "kb": 49
+  },
+  "GA6C": {
+   "gearLift": 2.718,
+   "tris": 14560,
+   "kb": 49
+  },
+  "G280": {
+   "gearLift": 1.824,
+   "tris": 14556,
+   "kb": 49
+  },
+  "GALX": {
+   "gearLift": 1.696,
+   "tris": 13788,
+   "kb": 47
+  },
+  "LJ31": {
+   "gearLift": 1.323,
+   "tris": 13788,
+   "kb": 47
+  },
+  "LJ35": {
+   "gearLift": 1.323,
+   "tris": 13788,
+   "kb": 47
+  },
+  "LJ40": {
+   "gearLift": 1.511,
+   "tris": 13788,
+   "kb": 47
+  },
+  "LJ45": {
+   "gearLift": 1.582,
+   "tris": 14556,
+   "kb": 49
+  },
+  "LJ60": {
+   "gearLift": 1.6,
+   "tris": 14556,
+   "kb": 49
+  },
+  "LJ75": {
+   "gearLift": 1.582,
+   "tris": 14556,
+   "kb": 49
+  },
+  "E50P": {
+   "gearLift": 1.144,
+   "tris": 13780,
+   "kb": 47
+  },
+  "E55P": {
+   "gearLift": 1.395,
+   "tris": 13788,
+   "kb": 47
+  },
+  "E545": {
+   "gearLift": 1.851,
+   "tris": 14556,
+   "kb": 49
+  },
+  "E550": {
+   "gearLift": 1.851,
+   "tris": 14556,
+   "kb": 49
+  },
+  "PC24": {
+   "gearLift": 1.511,
+   "tris": 14556,
+   "kb": 49
+  },
+  "HDJT": {
+   "gearLift": 1.162,
+   "tris": 14548,
+   "kb": 49
+  },
+  "H25B": {
+   "gearLift": 1.395,
+   "tris": 13788,
+   "kb": 47
+  },
+  "H25C": {
+   "gearLift": 1.395,
+   "tris": 13788,
+   "kb": 47
+  },
+  "PRM1": {
+   "gearLift": 1.252,
+   "tris": 13784,
+   "kb": 47
+  },
+  "BE40": {
+   "gearLift": 1.323,
+   "tris": 13788,
+   "kb": 47
+  },
+  "SF50": {
+   "gearLift": 0.84,
+   "tris": 13772,
+   "kb": 47
+  },
+  "EA50": {
+   "gearLift": 0.903,
+   "tris": 13772,
+   "kb": 47
+  },
+  "ASTR": {
+   "gearLift": 1.511,
+   "tris": 13788,
+   "kb": 47
+  },
+  "FA50": {
+   "gearLift": 1.516,
+   "tris": 15118,
+   "kb": 51
+  },
+  "FA7X": {
+   "gearLift": 1.918,
+   "tris": 15886,
+   "kb": 53
+  },
+  "FA8X": {
+   "gearLift": 2.008,
+   "tris": 15886,
+   "kb": 53
+  },
+  "F900": {
+   "gearLift": 1.655,
+   "tris": 15118,
+   "kb": 51
+  },
+  "F2TH": {
+   "gearLift": 1.655,
+   "tris": 15886,
+   "kb": 53
+  },
+  "FA6X": {
+   "gearLift": 2.106,
+   "tris": 15886,
+   "kb": 53
+  },
+  "AT43": {
+   "gearLift": 2.138,
+   "tris": 12472,
+   "kb": 47
+  },
+  "AT45": {
+   "gearLift": 2.138,
+   "tris": 12472,
+   "kb": 47
+  },
+  "AT72": {
+   "gearLift": 2.138,
+   "tris": 12504,
+   "kb": 46
+  },
+  "AT75": {
+   "gearLift": 2.138,
+   "tris": 12504,
+   "kb": 46
+  },
+  "AT76": {
+   "gearLift": 2.138,
+   "tris": 12504,
+   "kb": 46
+  },
+  "DH8A": {
+   "gearLift": 2.004,
+   "tris": 12472,
+   "kb": 46
+  },
+  "DH8B": {
+   "gearLift": 2.004,
+   "tris": 12472,
+   "kb": 46
+  },
+  "DH8C": {
+   "gearLift": 2.004,
+   "tris": 12500,
+   "kb": 45
+  },
+  "DH8D": {
+   "gearLift": 2.004,
+   "tris": 12552,
+   "kb": 46
+  },
+  "SF34": {
+   "gearLift": 1.468,
+   "tris": 12408,
+   "kb": 45
+  },
+  "DHC6": {
+   "gearLift": 1.177,
+   "tris": 12364,
+   "kb": 46
+  },
+  "D328": {
+   "gearLift": 1.587,
+   "tris": 12464,
+   "kb": 46
+  },
+  "SW4": {
+   "gearLift": 1.348,
+   "tris": 12376,
+   "kb": 45
+  },
+  "JS41": {
+   "gearLift": 1.438,
+   "tris": 12408,
+   "kb": 45
+  },
+  "C130": {
+   "gearLift": 2.881,
+   "tris": 13772,
+   "kb": 51
+  },
+  "C30J": {
+   "gearLift": 2.881,
+   "tris": 13772,
+   "kb": 51
+  },
+  "A400": {
+   "gearLift": 4.23,
+   "tris": 13868,
+   "kb": 53
+  },
+  "P3": {
+   "gearLift": 3.339,
+   "tris": 13676,
+   "kb": 49
+  },
+  "DHC7": {
+   "gearLift": 2.307,
+   "tris": 13676,
+   "kb": 48
+  },
+  "BE20": {
+   "gearLift": 1.127,
+   "tris": 12312,
+   "kb": 45
+  },
+  "BE30": {
+   "gearLift": 1.203,
+   "tris": 12340,
+   "kb": 45
+  },
+  "BE35": {
+   "gearLift": 0.686,
+   "tris": 12272,
+   "kb": 45
+  },
+  "BE9L": {
+   "gearLift": 0.915,
+   "tris": 12328,
+   "kb": 45
+  },
+  "BE9T": {
+   "gearLift": 0.915,
+   "tris": 12328,
+   "kb": 45
+  },
+  "B190": {
+   "gearLift": 1.491,
+   "tris": 13112,
+   "kb": 47
+  },
+  "B350": {
+   "gearLift": 1.203,
+   "tris": 13108,
+   "kb": 47
+  },
+  "PAY2": {
+   "gearLift": 0.864,
+   "tris": 12304,
+   "kb": 46
+  },
+  "PAY3": {
+   "gearLift": 1.033,
+   "tris": 12308,
+   "kb": 46
+  },
+  "BE55": {
+   "gearLift": 0.922,
+   "tris": 7672,
+   "kb": 35
+  },
+  "BE58": {
+   "gearLift": 0.987,
+   "tris": 7672,
+   "kb": 35
+  },
+  "BE76": {
+   "gearLift": 0.966,
+   "tris": 7672,
+   "kb": 35
+  },
+  "PA34": {
+   "gearLift": 0.944,
+   "tris": 7672,
+   "kb": 35
+  },
+  "PA31": {
+   "gearLift": 1.074,
+   "tris": 7672,
+   "kb": 35
+  },
+  "PA44": {
+   "gearLift": 0.911,
+   "tris": 7672,
+   "kb": 35
+  },
+  "C310": {
+   "gearLift": 1.052,
+   "tris": 7672,
+   "kb": 36
+  },
+  "C340": {
+   "gearLift": 1.139,
+   "tris": 7696,
+   "kb": 37
+  },
+  "C414": {
+   "gearLift": 1.204,
+   "tris": 7696,
+   "kb": 37
+  },
+  "C421": {
+   "gearLift": 1.204,
+   "tris": 7696,
+   "kb": 36
+  },
+  "DA42": {
+   "gearLift": 0.933,
+   "tris": 7696,
+   "kb": 36
+  },
+  "DA62": {
+   "gearLift": 0.998,
+   "tris": 7696,
+   "kb": 36
+  },
+  "P68": {
+   "gearLift": 0,
+   "tris": 7672,
+   "kb": 35
+  },
+  "C150": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C152": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C162": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "C170": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C172": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C177": {
+   "gearLift": 0.97,
+   "tris": 6552,
+   "kb": 30
+  },
+  "C180": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C182": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C185": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C206": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C207": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "C208": {
+   "gearLift": 0,
+   "tris": 6756,
+   "kb": 30
+  },
+  "C210": {
+   "gearLift": 0.993,
+   "tris": 6552,
+   "kb": 30
+  },
+  "P210": {
+   "gearLift": 0.993,
+   "tris": 6552,
+   "kb": 30
+  },
+  "PA18": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "CH7A": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "BL8": {
+   "gearLift": 0,
+   "tris": 6744,
+   "kb": 30
+  },
+  "KODI": {
+   "gearLift": 0,
+   "tris": 6768,
+   "kb": 30
+  },
+  "PA28": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "P28A": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "P28B": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "P28R": {
+   "gearLift": 0.851,
+   "tris": 6552,
+   "kb": 30
+  },
+  "PA32": {
+   "gearLift": 0,
+   "tris": 6564,
+   "kb": 29
+  },
+  "P32R": {
+   "gearLift": 0.941,
+   "tris": 6564,
+   "kb": 30
+  },
+  "PA46": {
+   "gearLift": 0.986,
+   "tris": 6564,
+   "kb": 30
+  },
+  "SR20": {
+   "gearLift": 0,
+   "tris": 6564,
+   "kb": 29
+  },
+  "SR22": {
+   "gearLift": 0,
+   "tris": 6564,
+   "kb": 29
+  },
+  "S22T": {
+   "gearLift": 0,
+   "tris": 6564,
+   "kb": 29
+  },
+  "BE33": {
+   "gearLift": 0.907,
+   "tris": 6552,
+   "kb": 30
+  },
+  "BE36": {
+   "gearLift": 0.941,
+   "tris": 6564,
+   "kb": 30
+  },
+  "M20P": {
+   "gearLift": 0.84,
+   "tris": 6552,
+   "kb": 30
+  },
+  "M20T": {
+   "gearLift": 0.885,
+   "tris": 6564,
+   "kb": 30
+  },
+  "DA40": {
+   "gearLift": 0,
+   "tris": 6564,
+   "kb": 29
+  },
+  "TBM7": {
+   "gearLift": 1.187,
+   "tris": 6576,
+   "kb": 30
+  },
+  "TBM8": {
+   "gearLift": 1.187,
+   "tris": 6576,
+   "kb": 30
+  },
+  "TBM9": {
+   "gearLift": 1.198,
+   "tris": 6588,
+   "kb": 30
+  },
+  "PC12": {
+   "gearLift": 1.613,
+   "tris": 6588,
+   "kb": 30
+  },
+  "RV7": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "RV10": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "DA20": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "AA5": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "TOBA": {
+   "gearLift": 0,
+   "tris": 6552,
+   "kb": 29
+  },
+  "C17": {
+   "gearLift": 4.589,
+   "tris": 19584,
+   "kb": 62
+  },
+  "C5M": {
+   "gearLift": 6.559,
+   "tris": 19200,
+   "kb": 60
+  },
+  "R22": {
+   "gearLift": 0,
+   "tris": 6072,
+   "kb": 33
+  },
+  "R44": {
+   "gearLift": 0,
+   "tris": 6072,
+   "kb": 33
+  },
+  "R66": {
+   "gearLift": 0,
+   "tris": 6072,
+   "kb": 33
+  },
+  "EC20": {
+   "gearLift": 0,
+   "tris": 6604,
+   "kb": 34
+  },
+  "EC30": {
+   "gearLift": 0,
+   "tris": 6604,
+   "kb": 34
+  },
+  "EC35": {
+   "gearLift": 0,
+   "tris": 6628,
+   "kb": 34
+  },
+  "EC45": {
+   "gearLift": 0,
+   "tris": 6628,
+   "kb": 34
+  },
+  "EC55": {
+   "gearLift": 0,
+   "tris": 6916,
+   "kb": 36
+  },
+  "EC75": {
+   "gearLift": 0,
+   "tris": 6432,
+   "kb": 35
+  },
+  "AS50": {
+   "gearLift": 0,
+   "tris": 6096,
+   "kb": 33
+  },
+  "AS55": {
+   "gearLift": 0,
+   "tris": 6096,
+   "kb": 33
+  },
+  "AS65": {
+   "gearLift": 0,
+   "tris": 6904,
+   "kb": 36
+  },
+  "AS32": {
+   "gearLift": 0,
+   "tris": 6456,
+   "kb": 35
+  },
+  "A109": {
+   "gearLift": 0,
+   "tris": 6384,
+   "kb": 34
+  },
+  "A119": {
+   "gearLift": 0,
+   "tris": 6120,
+   "kb": 33
+  },
+  "A139": {
+   "gearLift": 0,
+   "tris": 6456,
+   "kb": 35
+  },
+  "A169": {
+   "gearLift": 0,
+   "tris": 6384,
+   "kb": 34
+  },
+  "B06": {
+   "gearLift": 0,
+   "tris": 6072,
+   "kb": 33
+  },
+  "B407": {
+   "gearLift": 0,
+   "tris": 6120,
+   "kb": 33
+  },
+  "B429": {
+   "gearLift": 0,
+   "tris": 6168,
+   "kb": 33
+  },
+  "B412": {
+   "gearLift": 0,
+   "tris": 6120,
+   "kb": 33
+  },
+  "B212": {
+   "gearLift": 0,
+   "tris": 6072,
+   "kb": 33
+  },
+  "B505": {
+   "gearLift": 0,
+   "tris": 6072,
+   "kb": 33
+  },
+  "S76": {
+   "gearLift": 0,
+   "tris": 6432,
+   "kb": 35
+  },
+  "S92": {
+   "gearLift": 0,
+   "tris": 6432,
+   "kb": 35
+  },
+  "H60": {
+   "gearLift": 0,
+   "tris": 6432,
+   "kb": 35
+  },
+  "UH60": {
+   "gearLift": 0,
+   "tris": 6432,
+   "kb": 35
+  },
+  "MD52": {
+   "gearLift": 0,
+   "tris": 6104,
+   "kb": 31
+  },
+  "MD60": {
+   "gearLift": 0,
+   "tris": 6104,
+   "kb": 31
+  },
+  "EXPL": {
+   "gearLift": 0,
+   "tris": 6104,
+   "kb": 31
+  }
+ }
+}
