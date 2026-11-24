@@ -16,6 +16,7 @@ Everything is one free Cloudflare Worker:
 | Path | What it does |
 | --- | --- |
 | `public/index.html` | The app, served as static assets |
+| `public/aircraft-models.js` | Builds a detailed 3D model for each aircraft type (glTF), in the browser or in Node |
 | `src/worker.js` | Relays `/api/aircraft` and `/api/adsbdb/*`. Browsers block those APIs when a web page calls them directly. |
 | `wrangler.jsonc` | Worker config |
 
