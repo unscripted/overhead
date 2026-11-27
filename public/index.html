@@ -18,8 +18,9 @@
   Behavior
   - Polls ONLY while this page is open, visible, and not paused.
   - The camera orbits around YOUR position (drag to orbit, pinch/scroll to zoom).
-  - 3D aircraft are generated in the browser from type data (real length/wingspan, wing, tail and
-    engine layout, airline tail color). They scale up when far away so you can still see them.
+  - 3D aircraft are generated in the browser by aircraft-models.js from type data (real length and
+    wingspan; wing, winglet, tail, engine and landing gear layout; airline tail color). Rotors and
+    propellers spin. Models scale up when far away so you can still see them.
 
   Hosting: deployed as a Cloudflare Worker (see wrangler.jsonc). Opening the file directly from
   disk leaves the globe blank and blocks location.
@@ -204,272 +205,8 @@
   </div>
 </div>
 
+<script src="aircraft-models.js"></script>
 <script>
-/* =====================================================================================
-   Aircraft model generator: builds low-poly glTF 2.0 models in the browser.
-   Authoring frame: X forward (nose = +X), Y left, Z up, meters, origin at fuselage center.
-   ===================================================================================== */
-const AircraftModels = (() => {
-  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  const norm = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
-  const rad = d => d * Math.PI / 180;
-
-  class Builder {
-    constructor() { this.g = {}; }
-    // Adds a triangle; winding is fixed to agree with the given outward normal(s).
-    tri(mat, a, b, c, na, nb, nc) {
-      const g = this.g[mat] || (this.g[mat] = { p: [], n: [] });
-      const geo = norm(cross(sub(b, a), sub(c, a)));
-      if (!na) { na = nb = nc = geo; }
-      const avgN = [na[0] + nb[0] + nc[0], na[1] + nb[1] + nc[1], na[2] + nb[2] + nc[2]];
-      if (dot(geo, avgN) < 0) { [b, c] = [c, b]; [nb, nc] = [nc, nb]; }
-      g.p.push(...a, ...b, ...c); g.n.push(...na, ...nb, ...nc);
-    }
-    // Flat quad oriented away from a reference point inside the solid.
-    quad(mat, a, b, c, d, ref) {
-      for (const [p, q, r] of [[a, b, c], [a, c, d]]) {
-        let n = norm(cross(sub(q, p), sub(r, p)));
-        const cen = [(p[0] + q[0] + r[0]) / 3, (p[1] + q[1] + r[1]) / 3, (p[2] + q[2] + r[2]) / 3];
-        if (dot(n, sub(cen, ref)) < 0) n = [-n[0], -n[1], -n[2]];
-        this.tri(mat, p, q, r, n, n, n);
-      }
-    }
-    // Lofted body along X through elliptical sections [{x, ry, rz, zc, yc}]; smooth normals.
-    loft(mat, secs, seg = 14, th0 = 0, th1 = 2 * Math.PI) {
-      const full = Math.abs(th1 - th0 - 2 * Math.PI) < 1e-6, steps = seg;
-      const ring = s => Array.from({ length: steps + 1 }, (_, j) => {
-        const t = th0 + (th1 - th0) * j / steps, c = Math.cos(t), sn = Math.sin(t);
-        return { p: [s.x, (s.yc || 0) + s.ry * c, (s.zc || 0) + s.rz * sn], n: norm([0, c / Math.max(s.ry, 1e-3), sn / Math.max(s.rz, 1e-3)]) };
-      });
-      const rings = secs.map(ring);
-      for (let i = 0; i < rings.length - 1; i++) for (let j = 0; j < steps; j++) {
-        const A = rings[i][j], B = rings[i + 1][j], Cc = rings[i + 1][j + 1], D = rings[i][j + 1];
-        this.tri(mat, A.p, B.p, Cc.p, A.n, B.n, Cc.n); this.tri(mat, A.p, Cc.p, D.p, A.n, Cc.n, D.n);
-      }
-      if (full) for (const [k, dir] of [[0, 1], [rings.length - 1, -1]]) { // end caps
-        const s = secs[k]; if (s.ry < 0.02 && s.rz < 0.02) continue;
-        const cen = [s.x, s.yc || 0, s.zc || 0], n = [dir, 0, 0];
-        for (let j = 0; j < steps; j++) this.tri(mat, cen, rings[k][j].p, rings[k][j + 1].p, n, n, n);
-      }
-    }
-    // Thin hexahedron from 8 corners: top [rootLE, rootTE, tipTE, tipLE], then bottom in same order.
-    hexa(mat, c) {
-      const ref = c.reduce((s, p) => [s[0] + p[0] / 8, s[1] + p[1] / 8, s[2] + p[2] / 8], [0, 0, 0]);
-      const f = [[0, 1, 2, 3], [4, 7, 6, 5], [0, 4, 5, 1], [3, 2, 6, 7], [0, 3, 7, 4], [1, 5, 6, 2]];
-      for (const [a, b, d, e] of f) this.quad(mat, c[a], c[b], c[d], c[e], ref);
-    }
-    // Flat disc (rotor / propeller) in the plane with normal axis 'x' | 'z' | 'y'.
-    disc(mat, cen, r, axis, seg = 24) {
-      const pt = t => axis === "x" ? [cen[0], cen[1] + r * Math.cos(t), cen[2] + r * Math.sin(t)]
-        : axis === "y" ? [cen[0] + r * Math.cos(t), cen[1], cen[2] + r * Math.sin(t)]
-          : [cen[0] + r * Math.cos(t), cen[1] + r * Math.sin(t), cen[2]];
-      const n = axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];
-      for (let j = 0; j < seg; j++) this.tri(mat, cen, pt(2 * Math.PI * j / seg), pt(2 * Math.PI * (j + 1) / seg), n, n, n);
-    }
-  }
-
-  // Horizontal lifting surface (wing / stabilizer), mirrored left/right.
-  function hsurf(B, mat, o) {
-    const { xLE, y0, z0, cr, ct, semi, sweep, dih = 0, tR, tT } = o;
-    for (const s of [1, -1]) {
-      const yT = (y0 + semi) * s, xT = xLE - semi * Math.tan(rad(sweep)), zT = z0 + semi * Math.tan(rad(dih)), yR = y0 * s;
-      B.hexa(mat, [
-        [xLE, yR, z0 + tR / 2], [xLE - cr, yR, z0 + tR / 4], [xT - ct, yT, zT + tT / 4], [xT, yT, zT + tT / 2],
-        [xLE, yR, z0 - tR / 2], [xLE - cr, yR, z0 - tR / 4], [xT - ct, yT, zT - tT / 4], [xT, yT, zT - tT / 2]]);
-    }
-  }
-  // Vertical fin.
-  function vsurf(B, mat, o) {
-    const { xLE, z0, cr, ct, h, sweep, tR, tT } = o, xT = xLE - h * Math.tan(rad(sweep)), zT = z0 + h;
-    B.hexa(mat, [
-      [xLE, tR / 2, z0], [xLE - cr, tR / 4, z0], [xT - ct, tT / 4, zT], [xT, tT / 2, zT],
-      [xLE, -tR / 2, z0], [xLE - cr, -tR / 4, z0], [xT - ct, -tT / 4, zT], [xT, -tT / 2, zT]]);
-    return { xTipLE: xT, zTip: zT };
-  }
-  function nacelle(B, x0, y, z, r, len, propR) {
-    B.loft("engine", [
-      { x: x0, ry: r * 0.9, rz: r * 0.9, yc: y, zc: z }, { x: x0 - len * 0.15, ry: r, rz: r, yc: y, zc: z },
-      { x: x0 - len * 0.65, ry: r * 0.93, rz: r * 0.93, yc: y, zc: z }, { x: x0 - len, ry: r * 0.55, rz: r * 0.55, yc: y, zc: z }], 12);
-    if (propR) {
-      B.loft("engine", [{ x: x0 + r * 0.9, ry: 0.01, rz: 0.01, yc: y, zc: z }, { x: x0, ry: r * 0.5, rz: r * 0.5, yc: y, zc: z }], 10);
-      B.disc("disc", [x0 + r * 0.25, y, z], propR, "x");
-    } else B.disc("dark", [x0 + 0.02, y, z], r * 0.82, "x", 16);
-  }
-
-  // Family layouts. d: fuselage diameter / length. eng.r: nacelle radius / fuselage diameter. eng.len: nacelle length / length.
-  const FAM = {
-    narrow: { fus: "jet", d: .105, wing: "low", wx: .10, cr: .17, taper: .3, sweep: 25, dih: 5, tail: "conv", fin: .165, hs: .35, eng: { n: 2, mount: "wing", r: .3, len: .11 } },
-    narrow4: { fus: "jet", d: .1, wing: "low", wx: .10, cr: .17, taper: .3, sweep: 33, dih: 5, tail: "conv", fin: .17, hs: .36, eng: { n: 4, mount: "wing", r: .22, len: .09 } },
-    wide2: { fus: "jet", d: .095, wing: "low", wx: .10, cr: .18, taper: .25, sweep: 31, dih: 6, tail: "conv", fin: .16, hs: .34, eng: { n: 2, mount: "wing", r: .32, len: .085 } },
-    wide4: { fus: "jet", d: .09, wing: "low", wx: .10, cr: .18, taper: .25, sweep: 35, dih: 6, tail: "conv", fin: .17, hs: .34, eng: { n: 4, mount: "wing", r: .23, len: .075 } },
-    tri: { fus: "jet", d: .1, wing: "low", wx: .10, cr: .18, taper: .28, sweep: 35, dih: 5, tail: "conv", fin: .17, hs: .36, eng: { n: 3, mount: "tri", r: .3, len: .09 } },
-    ejet: { fus: "jet", d: .1, wing: "low", wx: .08, cr: .17, taper: .3, sweep: 25, dih: 5, tail: "conv", fin: .2, hs: .36, eng: { n: 2, mount: "wing", r: .32, len: .11 } },
-    rearjet: { fus: "jet", d: .095, wing: "low", wx: .0, cr: .15, taper: .3, sweep: 26, dih: 3, tail: "T", fin: .2, hs: .34, eng: { n: 2, mount: "rear", r: .28, len: .14 } },
-    bizjet: { fus: "jet", d: .12, wing: "low", wx: -.02, cr: .16, taper: .35, sweep: 28, dih: 3, tail: "T", fin: .22, hs: .38, eng: { n: 2, mount: "rear", r: .3, len: .17 } },
-    bizjet3: { fus: "jet", d: .11, wing: "low", wx: -.02, cr: .16, taper: .35, sweep: 30, dih: 3, tail: "conv", fin: .2, hs: .36, eng: { n: 3, mount: "rear3", r: .26, len: .15 } },
-    turboprop: { fus: "jet", d: .1, wing: "high", wx: .07, cr: .095, taper: .6, sweep: 2, dih: 1, tail: "T", fin: .2, hs: .33, eng: { n: 2, mount: "propwing", r: .27, len: .2 }, prop: .075 },
-    turboprop4: { fus: "jet", d: .14, wing: "high", wx: .07, cr: .1, taper: .55, sweep: 2, dih: 1, tail: "conv", fin: .2, hs: .36, eng: { n: 4, mount: "propwing", r: .2, len: .17 }, prop: .055 },
-    kingair: { fus: "jet", d: .11, wing: "low", wx: .06, cr: .12, taper: .55, sweep: 3, dih: 6, tail: "T", fin: .2, hs: .34, eng: { n: 2, mount: "propwing", r: .32, len: .22 }, prop: .08 },
-    twinprop: { fus: "ga", d: .14, wing: "low", wx: .12, cr: .13, taper: .7, sweep: 0, dih: 6, tail: "conv", fin: .13, hs: .34, eng: { n: 2, mount: "propwing", r: .28, len: .24 }, prop: .085 },
-    singlehigh: { fus: "ga", d: .14, wing: "high", wx: .16, cr: .145, taper: .75, sweep: 0, dih: 1.5, tail: "conv", fin: .12, hs: .32, eng: { n: 1, mount: "propnose" }, prop: .085 },
-    singlelow: { fus: "ga", d: .14, wing: "low", wx: .14, cr: .14, taper: .7, sweep: 0, dih: 6, tail: "conv", fin: .12, hs: .32, eng: { n: 1, mount: "propnose" }, prop: .085 },
-    mil4jet: { fus: "jet", d: .13, wing: "high", wx: .07, cr: .16, taper: .3, sweep: 25, dih: -3, tail: "T", fin: .2, hs: .38, eng: { n: 4, mount: "wing", r: .26, len: .1 } },
-    heli: { fus: "heli" },
-  };
-
-  // ICAO type designator -> [family, length m, wingspan m (rotor diameter for helicopters), friendly class]
-  const T = {};
-  const add = (fam, list) => list.split(",").forEach(e => { const [c, l, b] = e.trim().split(" "); T[c] = [fam, +l, +b]; });
-  add("narrow", "A318 31.4 34.1,A319 33.8 35.8,A320 37.6 35.8,A321 44.5 35.8,A19N 33.8 35.8,A20N 37.6 35.8,A21N 44.5 35.8,B736 31.2 34.3,B737 33.6 35.8,B738 39.5 35.8,B739 42.1 35.8,B37M 35.6 35.9,B38M 39.5 35.9,B39M 42.2 35.9,B3XM 43.8 35.9,BCS1 35 35.1,BCS3 38.7 35.1,B752 47.3 38.05,B753 54.4 38.05,A20 37.6 35.8");
-  add("narrow4", "K35R 41.5 39.9,E3TF 46.6 44.4,B703 46.6 44.4");
-  add("wide2", "A332 58.8 60.3,A333 63.7 60.3,A338 58.8 64,A339 63.7 64,A359 66.8 64.75,A35K 73.8 64.75,B762 48.5 47.6,B763 54.9 47.6,B764 61.4 51.9,B772 63.7 60.9,B77L 63.7 64.8,B773 73.9 60.9,B77W 73.9 64.8,B778 70.9 71.8,B779 76.7 71.8,B788 56.7 60.1,B789 62.8 60.1,B78X 68.3 60.1,A306 54.1 44.8,A30B 53.6 44.8,A310 46.7 43.9,KC46 50.5 48.1");
-  add("wide4", "A343 63.6 60.3,A346 75.3 63.5,A388 72.7 79.8,B744 70.7 64.4,B748 76.3 68.4,B74S 56.3 59.6");
-  add("tri", "MD11 61.6 51.7,DC10 55.5 50.4,L101 54.2 47.3");
-  add("ejet", "E170 29.9 26,E75L 31.7 28.7,E75S 31.7 26,E190 36.2 28.7,E195 38.7 28.7,E290 36.2 33.7,E295 41.5 35.1,A221 35 35.1,A223 38.7 35.1,SU95 29.9 27.8");
-  add("rearjet", "CRJ1 26.8 21.2,CRJ2 26.8 21.2,CRJ7 32.5 23.2,CRJ9 36.2 24.9,CRJX 39.1 26.2,E135 26.3 20,E145 29.9 20,E35L 26.3 21.2,B712 37.8 28.4,MD81 45 32.8,MD82 45 32.8,MD83 45 32.8,MD87 39.8 32.8,MD88 45 32.8,MD90 46.5 32.9,DC93 36.4 28.5,F100 35.5 28.1,F70 30.9 28.1");
-  add("bizjet", "C25A 13 14.4,C25B 14.4 15.8,C25C 16.3 16.3,C25M 12.9 14.4,C510 10.7 13.2,C525 12.4 14.4,C550 14.4 15.9,C560 14.9 15.9,C56X 15.8 17.2,C650 16.9 16.3,C680 19.4 19.4,C68A 19.4 22,C700 22.3 22,C750 22 19.4,CL30 20.9 19.5,CL35 20.9 19.5,CL60 20.9 19.6,GL5T 29.5 28.7,GLEX 30.3 28.7,GL6T 30.3 28.7,GL7T 33.8 31.7,GLF4 26.9 23.7,GLF5 29.4 28.5,GLF6 30.4 30.4,GA6C 30.4 30.4,G280 20.4 19.2,GALX 18.97 17.7,LJ31 14.8 13.4,LJ35 14.8 12,LJ40 16.9 14.6,LJ45 17.7 14.6,LJ60 17.9 13.4,LJ75 17.7 15.5,E50P 12.8 12.3,E55P 15.6 16.2,E545 20.7 20,E550 20.7 20,PC24 16.9 17,HDJT 13 12.1,H25B 15.6 15.7,H25C 15.6 15.7,PRM1 14 13.6,BE40 14.8 13.3,SF50 9.4 11.8,EA50 10.1 11.6,ASTR 16.9 16.6");
-  add("bizjet3", "FA50 18.5 18.9,FA7X 23.4 26.2,FA8X 24.5 26.3,F900 20.2 19.3,F2TH 20.2 19.3,FA6X 25.7 25.9");
-  add("turboprop", "AT43 22.7 24.6,AT45 22.7 24.6,AT72 27.2 27.05,AT75 27.2 27.05,AT76 27.2 27.05,DH8A 22.3 25.9,DH8B 22.3 25.9,DH8C 25.7 27.4,DH8D 32.8 28.4,SF34 19.7 21.4,DHC6 15.8 19.8,D328 21.3 21,SW4 18.1 17.4,JS41 19.3 18.3");
-  add("turboprop4", "C130 29.8 40.4,C30J 29.8 40.4,A400 45.1 42.4,P3 35.6 30.4,DHC7 24.6 28.4");
-  add("kingair", "BE20 13.3 16.6,BE30 14.2 17.7,BE35 8.1 10.2,BE9L 10.8 15.3,BE9T 10.8 15.3,B190 17.6 17.7,B350 14.2 17.7,PAY2 10.2 13.4,PAY3 12.2 14.1");
-  add("twinprop", "BE55 8.5 11.5,BE58 9.1 11.5,BE76 8.9 11.6,PA34 8.7 11.9,PA31 9.9 12.4,PA44 8.4 11.8,C310 9.7 11.3,C340 10.5 11.6,C414 11.1 12.1,C421 11.1 12.5,DA42 8.6 13.4,DA62 9.2 14.6,P68 9.4 12");
-  add("singlehigh", "C150 7.3 10.2,C152 7.3 10.2,C162 6.9 9.1,C170 7.6 11,C172 8.3 11,C177 8.4 10.8,C180 7.8 11,C182 8.8 11,C185 7.8 11,C206 8.6 11,C207 9.7 11,C208 11.5 15.9,C210 8.6 11.2,P210 8.6 11.2,PA18 6.9 10.7,CH7A 6.9 10.7,BL8 6.9 10.2,KODI 10 14.5");
-  add("singlelow", "PA28 7.3 10.7,P28A 7.3 10.7,P28B 7.3 10.7,P28R 7.6 10.8,PA32 8.4 11,P32R 8.4 11,PA46 8.8 13.1,SR20 7.9 11.7,SR22 7.9 11.7,S22T 7.9 11.7,BE33 8.1 10.2,BE36 8.4 10.2,M20P 7.5 11,M20T 7.9 11,DA40 8 11.9,TBM7 10.6 12.8,TBM8 10.6 12.8,TBM9 10.7 12.8,PC12 14.4 16.3,RV7 6.2 7.7,RV10 7.4 9.7,DA20 7.2 10.9,AA5 6.9 9.4,TOBA 7.7 10");
-  add("mil4jet", "C17 53 51.75,C5M 75.3 67.9");
-  add("heli", "R22 8.8 7.7,R44 11.7 10.1,R66 11.7 10.1,EC20 10.7 10.2,EC30 12.9 10.7,EC35 12.2 10.2,EC45 13 11,EC55 14.3 12.6,EC75 16.6 14.8,AS50 12.9 10.7,AS55 12.9 10.7,AS65 13.7 11.9,AS32 18.7 16.2,A109 13 11,A119 13 10.8,A139 16.7 13.8,A169 14.6 12.1,B06 11.8 10.2,B407 12.7 10.7,B429 13.1 11,B412 17.1 14,B212 17.1 14,B505 11.6 11.3,S76 16 13.4,S92 20.9 17.2,H60 19.8 16.4,UH60 19.8 16.4,MD52 9.9 8.4,MD60 11 8.4,EXPL 11.8 10.3");
-
-  const CLASS_NAME = { narrow: "Narrow-body jet", narrow4: "Four-engine jet", wide2: "Wide-body jet", wide4: "Four-engine wide-body", tri: "Three-engine wide-body",
-    ejet: "Regional jet", rearjet: "Regional jet", bizjet: "Business jet", bizjet3: "Business jet", turboprop: "Turboprop", turboprop4: "Four-engine turboprop",
-    kingair: "Twin turboprop", twinprop: "Twin piston", singlehigh: "Single-engine prop", singlelow: "Single-engine prop", mil4jet: "Military transport", heli: "Helicopter" };
-
-  function buildGeometry(fam, L, b, livery) {
-    const F = FAM[fam], B = new Builder();
-    if (F.fus === "heli") return buildHeli(B, L, b), B;
-    const D = F.d * L, R = D / 2, ga = F.fus === "ga";
-    // --- Fuselage ---
-    const secs = ga
-      ? [[L / 2, .5, -.12], [L / 2 - .12 * L, .95, 0], [L / 2 - .3 * L, 1, .04], [L / 2 - .48 * L, .78, .12], [-L / 2 + .2 * L, .32, .25], [-L / 2, .16, .3]]
-      : [[L / 2, .03, -.25], [L / 2 - .25 * R, .45, -.15], [L / 2 - .7 * R, .76, -.07], [L / 2 - 1.4 * R, .94, -.02], [L / 2 - 2.4 * R, 1, 0],
-         [-L / 2 + 3.4 * R, 1, 0], [-L / 2 + 1.8 * R, .68, .26], [-L / 2 + .5 * R, .3, .5], [-L / 2, .12, .6]];
-    const ey = ga ? .9 : 1, ez = ga ? 1.1 : 1.04;
-    B.loft("body", secs.map(([x, r, zc]) => ({ x, ry: r * R * ey, rz: r * R * ez, zc: zc * R })), 16);
-    // Windshield / canopy
-    if (ga) B.loft("dark", [{ x: L / 2 - .2 * L, ry: R * .93 * 1.02, rz: R * 1.12, zc: .02 * R }, { x: L / 2 - .38 * L, ry: R * .9 * 1.02, rz: R * 1.06, zc: .08 * R }], 10, rad(30), rad(150));
-    else B.loft("dark", [{ x: L / 2 - .78 * R, ry: .8 * R * 1.015, rz: .8 * R * 1.055, zc: -.06 * R }, { x: L / 2 - 1.22 * R, ry: .92 * R * 1.015, rz: .92 * R * 1.055, zc: -.03 * R }], 8, rad(28), rad(152));
-
-    // --- Wing ---
-    const zW = F.wing === "high" ? .82 * R : -.55 * R, y0 = .55 * R, semi = b / 2 - y0;
-    const cr = F.cr * b, ct = cr * F.taper, xW = F.wx * L + cr / 2;
-    const wing = { xLE: xW, y0, z0: zW, cr, ct, semi, sweep: F.sweep, dih: F.dih, tR: .12 * cr, tT: .1 * ct };
-    hsurf(B, "body", wing);
-    const wingAt = y => ({ x: xW - (y - y0) * Math.tan(rad(F.sweep)), z: zW + (y - y0) * Math.tan(rad(F.dih)), c: cr + (ct - cr) * (y - y0) / semi });
-
-    // --- Tail ---
-    const hf = F.fin * b * (ga ? 1.1 : 1), fcr = (ga ? .9 : 1.05) * hf, fct = .45 * fcr;
-    const fin = vsurf(B, "livery", { xLE: -L / 2 + .015 * L + fcr, z0: (ga ? .2 : .5) * R, cr: fcr, ct: fct, h: hf, sweep: ga ? 25 : 38, tR: .1 * fcr, tT: .1 * fct });
-    const hb = F.hs * b, hcr = (ga ? .4 : .28) * hb, hsw = ga ? 0 : (F.sweep > 10 ? 30 : 6);
-    if (F.tail === "T") hsurf(B, "livery", { xLE: fin.xTipLE + .05 * fct, y0: 0, z0: fin.zTip - .05 * hf, cr: fct * 1.05, ct: fct * .45, semi: hb / 2, sweep: hsw, dih: 0, tR: .08 * fct, tT: .05 * fct });
-    else hsurf(B, "body", { xLE: -L / 2 + .02 * L + hcr * 1.1, y0: .2 * R, z0: (ga ? .25 : .25) * R, cr: hcr, ct: hcr * .4, semi: hb / 2 - .2 * R, sweep: hsw, dih: ga ? 0 : 6, tR: .09 * hcr, tT: .06 * hcr });
-
-    // --- Engines ---
-    const E = F.eng;
-    if (E.mount === "wing" || E.mount === "tri" || E.mount === "propwing") {
-      const prop = E.mount === "propwing";
-      const r = (prop ? E.r * D * .9 : E.r * D), len = E.len * L;
-      const fr = E.n === 4 ? [.3, .56] : prop ? [ga ? .3 : .33] : [.34];
-      for (const f of fr) for (const s of [1, -1]) {
-        const y = f * b / 2, w = wingAt(y);
-        if (prop) {
-          const zc = F.wing === "high" ? w.z - r * .35 : w.z + r * .2;
-          nacelle(B, w.x + len * .45, y * s, zc, r, len, F.prop * b);
-        } else {
-          const zc = w.z - r * 1.15;
-          nacelle(B, w.x + len * .4, y * s, zc, r, len);
-          B.hexa("engine", [[w.x - .1 * w.c, y * s + .06 * r, w.z], [w.x - .7 * w.c, y * s + .06 * r, w.z], [w.x - .7 * w.c, y * s + .06 * r, zc + .6 * r], [w.x + .3 * len, y * s + .06 * r, zc + .6 * r],
-            [w.x - .1 * w.c, y * s - .06 * r, w.z], [w.x - .7 * w.c, y * s - .06 * r, w.z], [w.x - .7 * w.c, y * s - .06 * r, zc + .6 * r], [w.x + .3 * len, y * s - .06 * r, zc + .6 * r]]);
-        }
-      }
-      if (E.mount === "tri") nacelle(B, -L / 2 + .05 * L + fcr * .9, 0, .5 * R + hf * .18, r * .95, len * 1.2);
-    } else if (E.mount === "rear" || E.mount === "rear3") {
-      const r = E.r * D, len = E.len * L, xc = -L / 2 + .27 * L, x0 = xc + len / 2, yy = R * .95 + r * 1.05, zc = .3 * R;
-      for (const s of [1, -1]) {
-        nacelle(B, x0, yy * s, zc, r, len);
-        B.hexa("engine", [[xc + .15 * len, R * .6 * s, zc + .08 * r], [xc - .25 * len, R * .6 * s, zc + .08 * r], [xc - .25 * len, yy * s, zc + .08 * r], [xc + .15 * len, yy * s, zc + .08 * r],
-          [xc + .15 * len, R * .6 * s, zc - .08 * r], [xc - .25 * len, R * .6 * s, zc - .08 * r], [xc - .25 * len, yy * s, zc - .08 * r], [xc + .15 * len, yy * s, zc - .08 * r]]);
-      }
-      if (E.mount === "rear3") nacelle(B, x0 - .02 * L, 0, R * .75 + r * .7, r * .9, len * .9);
-    } else if (E.mount === "propnose") {
-      B.loft("engine", [{ x: L / 2 + .45 * R, ry: .02, rz: .02 }, { x: L / 2 + .05, ry: R * .35, rz: R * .35 }], 10);
-      B.disc("disc", [L / 2 + .15 * R, 0, 0], F.prop * b, "x");
-    }
-    return B;
-  }
-
-  function buildHeli(B, L, rotorD) {
-    const Rp = .085 * L, xs = L / 2;
-    B.loft("livery", [[xs, .3, -.15], [xs - .08 * L, .85, 0], [xs - .18 * L, 1, .05], [xs - .36 * L, .92, .1], [xs - .47 * L, .38, .28], [-L / 2 + .06 * L, .13, .32], [-L / 2, .1, .34]]
-      .map(([x, r, zc]) => ({ x, ry: r * Rp * .85, rz: r * Rp * 1.05, zc: zc * Rp })), 14);
-    B.loft("dark", [{ x: xs - .015 * L, ry: .55 * Rp * .87, rz: .55 * Rp * 1.08, zc: -.1 * Rp }, { x: xs - .13 * L, ry: .97 * Rp * .87, rz: .97 * Rp * 1.08, zc: .03 * Rp }], 10, rad(-20), rad(200));
-    const xm = xs - .25 * L;
-    B.loft("engine", [{ x: xm + .05 * L, ry: .4 * Rp, rz: .3 * Rp, zc: 1.0 * Rp }, { x: xm - .1 * L, ry: .4 * Rp, rz: .3 * Rp, zc: 1.0 * Rp }], 10);
-    B.disc("disc", [xm, 0, 1.45 * Rp], rotorD / 2, "z", 32);
-    vsurf(B, "livery", { xLE: -L / 2 + .09 * L, z0: .3 * Rp, cr: .08 * L, ct: .05 * L, h: .14 * L, sweep: 35, tR: .02 * L, tT: .015 * L });
-    B.disc("disc", [-L / 2 + .04 * L, -.25 * Rp, .9 * Rp], .09 * rotorD, "y", 16);
-    for (const s of [1, -1]) B.loft("engine", [{ x: xs - .08 * L, ry: .05 * Rp, rz: .05 * Rp, yc: .8 * Rp * s, zc: -1.3 * Rp }, { x: xs - .45 * L, ry: .05 * Rp, rz: .05 * Rp, yc: .8 * Rp * s, zc: -1.3 * Rp }], 6);
-  }
-
-  // ---- glTF writer ----
-  const MATS = {
-    body: { c: [.93, .94, .95, 1] }, engine: { c: [.58, .6, .64, 1], m: .3 }, dark: { c: [.07, .08, .1, 1], r: .25 },
-    disc: { c: [.12, .12, .12, .28], blend: true }, livery: { c: null },
-  };
-  function toGltf(B, livery) {
-    const names = Object.keys(B.g), chunks = [], bufferViews = [], accessors = [], prims = [], materials = [];
-    let offset = 0;
-    names.forEach((name, mi) => {
-      const g = B.g[name], n = g.p.length / 3, P = new Float32Array(n * 3), N = new Float32Array(n * 3);
-      const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
-      // Authoring (X fwd, Y left, Z up) -> glTF (+X left, +Y up, +Z forward). Cesium maps glTF +Z forward
-      // to the model's +X, so heading/pitch/roll act on the nose, wings and fin as expected.
-      for (let i = 0; i < n; i++) {
-        const x = g.p[i * 3], y = g.p[i * 3 + 1], z = g.p[i * 3 + 2], v = [y, z, x];
-        P.set(v, i * 3); N.set([g.n[i * 3 + 1], g.n[i * 3 + 2], g.n[i * 3]], i * 3);
-        for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], v[k]); mx[k] = Math.max(mx[k], v[k]); }
-      }
-      for (const [arr, isPos] of [[P, true], [N, false]]) {
-        chunks.push(arr); bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: arr.byteLength, target: 34962 });
-        accessors.push(Object.assign({ bufferView: bufferViews.length - 1, componentType: 5126, count: n, type: "VEC3" }, isPos ? { min: mn, max: mx } : {}));
-        offset += arr.byteLength;
-      }
-      const M = MATS[name], col = M.c || livery;
-      materials.push({ name, pbrMetallicRoughness: { baseColorFactor: col, metallicFactor: M.m ?? .1, roughnessFactor: M.r ?? .55 },
-        doubleSided: name === "disc" || name === "dark", ...(M.blend ? { alphaMode: "BLEND" } : {}) });
-      prims.push({ attributes: { POSITION: accessors.length - 2, NORMAL: accessors.length - 1 }, material: mi, mode: 4 });
-    });
-    const bytes = new Uint8Array(offset); let o = 0;
-    for (const c of chunks) { bytes.set(new Uint8Array(c.buffer), o); o += c.byteLength; }
-    let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return {
-      asset: { version: "2.0", generator: "Overhead3D" }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }], meshes: [{ primitives: prims }],
-      materials, accessors, bufferViews, buffers: [{ byteLength: offset, uri: "data:application/octet-stream;base64," + btoa(bin) }],
-    };
-  }
-
-  const urlCache = new Map();
-  function modelUrl(fam, L, b, liveryHex) {
-    const key = `${fam}|${L}|${b}|${liveryHex}`;
-    if (!urlCache.has(key)) {
-      const c = liveryHex.match(/\w\w/g).map(h => Math.pow(parseInt(h, 16) / 255, 2.2)); // sRGB -> linear
-      const gltf = toGltf(buildGeometry(fam, L, b), [...c, 1]);
-      urlCache.set(key, URL.createObjectURL(new Blob([JSON.stringify(gltf)], { type: "model/gltf+json" })));
-    }
-    return urlCache.get(key);
-  }
-  return { T, FAM, CLASS_NAME, modelUrl };
-})();
-
 /* =====================================================================================
    App
    ===================================================================================== */
@@ -508,6 +245,7 @@ const AircraftModels = (() => {
   const scene = viewer.scene, camera = viewer.camera, ctrl = scene.screenSpaceCameraController;
   viewer.creditDisplay.addStaticCredit(new C.Credit("Flight data: airplanes.live / adsb.lol / adsb.fi · Aircraft info: adsbdb", true));
   scene.globe.enableLighting = false;
+  viewer.clock.shouldAnimate = true; // spins rotors and propellers (glTF animations)
   scene.fog.enabled = true;
   ctrl.minimumZoomDistance = 150;
   ctrl.maximumZoomDistance = 3e6;
@@ -610,8 +348,8 @@ const AircraftModels = (() => {
   // Which model to show: known ICAO type → exact; else ADS-B emitter category; else speed/altitude guess.
   function resolveType(p) {
     const code = p.typeCode || meta.get(p.icao24)?.icaoType || null;
-    if (code && AM.T[code]) { const [fam, L, b] = AM.T[code]; return { fam, L, b, code, exact: true }; }
-    const pick = c => { const [fam, L, b] = AM.T[c]; return { fam, L, b, code, exact: false }; };
+    if (code && AM.T[code]) { const [fam, L, b] = AM.T[code]; return { fam, L, b, code, model: code, exact: true }; }
+    const pick = c => { const [fam, L, b] = AM.T[c]; return { fam, L, b, code, model: c, exact: false }; };
     switch (p.category) {
       case 2: return pick("C172");
       case 3: return pick((p.speedKt ?? 0) > 260 ? "CRJ9" : "AT72");
@@ -627,6 +365,12 @@ const AircraftModels = (() => {
     if (kt < 75 && ft < 3000 && !p.onGround) return pick("EC35");
     if (kt < 150 && ft < 12000) return pick("C172");
     return pick(kt > 260 ? "CRJ9" : "AT72");
+  }
+  // Landing gear is drawn on the ground and on final approach (below 2,000 ft above ground, descending).
+  function gearDown(p) {
+    if (p.onGround) return true;
+    const aglFt = ((p.altM ?? 1e5) - (p.groundH ?? 0)) * M_TO_FT;
+    return aglFt < 2000 && (p.vrateFpm ?? 0) < -300;
   }
   function liveryFor(p) { const pre = p.callsign.slice(0, 3); return /^[A-Z]{3}\d/.test(p.callsign) && LIVERY[pre] ? LIVERY[pre] : "7f8a9c"; }
 
@@ -687,8 +431,8 @@ const AircraftModels = (() => {
     const e = state.entities.get(p.icao24); if (!e) return;
     const sel = state.selected === p.icao24, col = C.Color.fromCssColorString(altColor(p.altFt, p.onGround));
     const t = resolveType(p); p.typeInfo = t;
-    const key = `${t.fam}|${t.L}|${t.b}|${liveryFor(p)}`;
-    if (key !== e.modelKey) { e.ent.model.uri = AM.modelUrl(t.fam, t.L, t.b, liveryFor(p)); e.modelKey = key; }
+    const gear = gearDown(p), key = `${t.fam}|${t.L}|${t.b}|${liveryFor(p)}|${t.model}|${gear}`;
+    if (key !== e.modelKey) { e.ent.model.uri = AM.modelUrl(t.fam, t.L, t.b, liveryFor(p), { code: t.model, gear }); e.modelKey = key; }
     e.ent.model.silhouetteColor = sel ? C.Color.WHITE : col;
     e.ent.model.silhouetteSize = sel ? 3 : 1.2;
     e.ent.model.minimumPixelSize = sel ? 60 : 44;
