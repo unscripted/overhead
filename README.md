@@ -16,7 +16,9 @@ Everything is one free Cloudflare Worker:
 | Path | What it does |
 | --- | --- |
 | `public/index.html` | The app, served as static assets |
-| `public/aircraft-models.js` | Builds a detailed 3D model for each aircraft type (glTF), in the browser or in Node |
+| `public/aircraft-models.js` | Builds a 3D model for each aircraft type (glTF), in the browser or in Node |
+| `public/models/` | One detailed, compressed model file per aircraft type, plus `manifest.json` |
+| `tools/build-models.mjs` | Bakes `public/models/` from `aircraft-models.js` |
 | `src/worker.js` | Relays `/api/aircraft` and `/api/adsbdb/*`. Browsers block those APIs when a web page calls them directly. |
 | `wrangler.jsonc` | Worker config |
 
@@ -33,3 +35,14 @@ Every push to `main` redeploys automatically (Cloudflare account: Matchbox DevOp
 ```sh
 npx wrangler dev
 ```
+
+## Aircraft models
+
+Each ICAO type code has a model file in `public/models/<TYPE>.glb`. The files are generated from the type data in `public/aircraft-models.js`, which sets dimensions, wingtips, engines, gear and helicopter rotors. To change a model, edit that file and rebuild:
+
+```sh
+cd tools && npm install && npm run build-models          # all types
+npm run build-models -- B738 A20N EC35                    # just these
+```
+
+The files use a neutral tail color that the app recolors for each airline. Retractable landing gear sits in a node named `gear`, which the app hides in flight.

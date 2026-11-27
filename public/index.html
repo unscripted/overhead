@@ -18,9 +18,10 @@
   Behavior
   - Polls ONLY while this page is open, visible, and not paused.
   - The camera orbits around YOUR position (drag to orbit, pinch/scroll to zoom).
-  - 3D aircraft are generated in the browser by aircraft-models.js from type data (real length and
-    wingspan; wing, winglet, tail, engine and landing gear layout; airline tail color). Rotors and
-    propellers spin. Models scale up when far away so you can still see them.
+  - 3D aircraft: a detailed model file per ICAO type in models/ (baked from aircraft-models.js by
+    tools/build-models.mjs), recolored with the airline's tail color. Until a file loads, or for a
+    type without one, aircraft-models.js builds a lighter model in the browser. Rotors and propellers
+    spin; landing gear shows on the ground and on approach. Models scale up when far away.
 
   Hosting: deployed as a Cloudflare Worker (see wrangler.jsonc). Opening the file directly from
   disk leaves the globe blank and blocks location.
@@ -427,12 +428,45 @@
     });
     return { ent, trail, modelKey: null };
   }
+  // ---------- Model files (public/models, baked by tools/build-models.mjs) ----------
+  // One detailed .glb per type with a neutral tail color: recolored per airline here, with its
+  // landing gear node hidden in flight. The in-browser model shows until a file has loaded.
+  const files = { types: null, bufs: new Map(), urls: new Map() };
+  fetch("models/manifest.json").then(r => (r.ok ? r.json() : null)).then(m => {
+    files.types = m?.types || null;
+    if (files.types) for (const p of state.planes.values()) styleEntity(p);
+  }).catch(() => {});
+  function fileModel(code, livery) {
+    const info = files.types?.[code]; if (!info) return null;
+    const key = `${code}|${livery}`;
+    if (files.urls.has(key)) return { url: files.urls.get(key), info };
+    if (!files.bufs.has(code)) {
+      files.bufs.set(code, fetch(`models/${code}.glb`).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
+        .catch(() => { delete files.types[code]; return null; })); // fall back to the in-browser model
+    }
+    files.bufs.get(code).then(buf => {
+      if (!buf || files.urls.has(key)) return;
+      files.urls.set(key, URL.createObjectURL(new Blob([AM.recolorGlb(buf, livery)], { type: "model/gltf-binary" })));
+      for (const p of state.planes.values()) if (p.typeInfo?.model === code) styleEntity(p);
+    });
+    return null;
+  }
+  // Gear up: shrink the gear node away. Gear down: show it and raise the model so the wheels touch the ground.
+  const gearNodes = (down, lift) => ({
+    gear: new C.TranslationRotationScale(undefined, undefined, down ? new C.Cartesian3(1, 1, 1) : new C.Cartesian3(1e-4, 1e-4, 1e-4)),
+    aircraft: new C.TranslationRotationScale(new C.Cartesian3(0, down ? lift : 0, 0)),
+  });
+
   function styleEntity(p) {
     const e = state.entities.get(p.icao24); if (!e) return;
     const sel = state.selected === p.icao24, col = C.Color.fromCssColorString(altColor(p.altFt, p.onGround));
     const t = resolveType(p); p.typeInfo = t;
-    const gear = gearDown(p), key = `${t.fam}|${t.L}|${t.b}|${liveryFor(p)}|${t.model}|${gear}`;
-    if (key !== e.modelKey) { e.ent.model.uri = AM.modelUrl(t.fam, t.L, t.b, liveryFor(p), { code: t.model, gear }); e.modelKey = key; }
+    const gear = gearDown(p), livery = liveryFor(p), file = fileModel(t.model, livery);
+    const key = file ? `file|${t.model}|${livery}` : `${t.fam}|${t.L}|${t.b}|${livery}|${t.model}|${gear}`;
+    if (key !== e.modelKey) { e.ent.model.uri = file ? file.url : AM.modelUrl(t.fam, t.L, t.b, livery, { code: t.model, gear }); e.modelKey = key; e.gear = undefined; }
+    const lift = file?.info.gearLift;
+    if (lift && e.gear !== gear) { e.ent.model.nodeTransformations = gearNodes(gear, lift); e.gear = gear; }
+    else if (!lift && e.gear !== undefined) { e.ent.model.nodeTransformations = undefined; e.gear = undefined; }
     e.ent.model.silhouetteColor = sel ? C.Color.WHITE : col;
     e.ent.model.silhouetteSize = sel ? 3 : 1.2;
     e.ent.model.minimumPixelSize = sel ? 60 : 44;

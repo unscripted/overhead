@@ -1,0 +1,16 @@
+{
+  "name": "overhead-model-tools",
+  "private": true,
+  "description": "Bakes public/models/*.glb from public/aircraft-models.js",
+  "type": "module",
+  "scripts": {
+    "build-models": "node build-models.mjs"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "4.2.1",
+    "@gltf-transform/extensions": "4.2.1",
+    "@gltf-transform/functions": "4.2.1",
+    "draco3dgltf": "1.5.7",
+    "gltf-validator": "2.0.0-dev.3.10"
+  }
+}

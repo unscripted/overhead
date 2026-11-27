@@ -35,7 +35,10 @@
   // Geometry builder. Geometry is grouped into parts (glTF nodes); a part can spin.
   // ---------------------------------------------------------------------------------
   class Builder {
-    constructor() { this.parts = [{ name: "airframe", pivot: [0, 0, 0], spin: null, g: {} }]; this.cur = this.parts[0]; this.lift = 0; }
+    // q: tessellation multiplier. hq adds small details (lights, seams, antennas, chevrons).
+    constructor(hq = false) { this.parts = [{ name: "airframe", pivot: [0, 0, 0], spin: null, g: {} }]; this.cur = this.parts[0]; this.lift = 0; this.hq = hq; this.q = hq ? 2 : 1; }
+    // Switch to a named part, creating it on first use (used for the landing gear).
+    use(name) { const p = this.parts.find(x => x.name === name) || this.part(name, [0, 0, 0], null); this.cur = p; return p; }
     part(name, pivot, spin) { const p = { name, pivot, spin, g: {} }; this.parts.push(p); this.cur = p; return p; }
     main() { this.cur = this.parts[0]; }
     // Adds a triangle; winding is fixed to agree with the given outward normal(s).
@@ -91,6 +94,7 @@
     }
     // Lofted body along X through sections {x, ry, rz, yc, zc, e (superellipse exponent)}.
     loft(mat, secs, seg = 24, th0 = 0, th1 = 2 * Math.PI, o = {}) {
+      seg = Math.max(1, Math.round(seg * this.q));
       const full = Math.abs(th1 - th0 - 2 * Math.PI) < 1e-6, cols = full ? seg : seg + 1;
       const P = secs.map(s => Array.from({ length: cols }, (_, j) => {
         const t = th0 + (th1 - th0) * j / seg, c = Math.cos(t), sn = Math.sin(t), e = s.e || 2;
@@ -103,7 +107,7 @@
     // right of the profile when walking along it in the (s, r) plane, so the outer skin of a body
     // runs nose to tail and an inner duct runs tail to nose.
     lathe(mat, c, a, prof, seg = 20, o = {}) {
-      a = norm(a); const [e1, e2] = basis(a);
+      seg = Math.round(seg * this.q); a = norm(a); const [e1, e2] = basis(a);
       const P = [], C = [];
       prof.forEach(([s, r]) => {
         const row = [];
@@ -144,7 +148,7 @@
     // Lifting surface through stations {x (leading edge), y, z, c (chord), t (thickness ratio),
     // cant (0 = horizontal, 90 = vertical, measured from +Y up)}. Mirrored when o.mirror.
     foil(mat, st, o = {}) {
-      const n = o.n || 9, camber = o.camber || 0, us = [];
+      const n = Math.round((o.n || 9) * (this.q > 1 ? 1.6 : 1)), camber = o.camber || 0, us = [];
       for (let k = n; k >= 0; k--) us.push([(1 - Math.cos(Math.PI * k / n)) / 2, 1]);
       for (let k = 1; k < n; k++) us.push([(1 - Math.cos(Math.PI * k / n)) / 2, -1]);
       const half = (u, t) => 5 * t * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u * u + 0.2843 * u ** 3 - 0.1036 * u ** 4);
@@ -164,7 +168,28 @@
       build(false);
       if (o.mirror) build(true);
     }
+    // Small emissive light (navigation / beacon / strobe).
+    light(mat, p, r) { this.lathe(mat, add(p, [r, 0, 0]), [-1, 0, 0], [[0, .001], [.3 * r, .8 * r], [r, r], [1.7 * r, .8 * r], [2 * r, .001]], 8); }
+    // Thin seam line drawn just above a lifting surface between (station a, u0) and (station b, u1).
+    // side: +1 upper, -1 lower. Stations as for foil(); flip mirrors to -Y.
+    seam(a, b, u0, u1, side, w, camber = 0, flip = false) {
+      const p0 = foilPt(a, u0, side, camber, flip, .002), p1 = foilPt(b, u1, side, camber, flip, .002);
+      const d = norm(sub(p1, p0)), ca = rad(lerp(a.cant || 0, b.cant || 0, .5));
+      const n = flip ? [0, Math.sin(ca), Math.cos(ca)] : [0, -Math.sin(ca), Math.cos(ca)];
+      const side3 = mul(norm(cross(n, d)), w / 2), ref = sub(lerp3(p0, p1, .5), mul(n, side));
+      this.quad("seam", add(p0, side3), sub(p0, side3), sub(p1, side3), add(p1, side3), ref);
+    }
   }
+  const lerp3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+  const foilHalf = (u, t) => 5 * t * (0.2969 * Math.sqrt(u) - 0.126 * u - 0.3516 * u * u + 0.2843 * u ** 3 - 0.1036 * u ** 4);
+  // Point on a foil station's surface at chord fraction u (side +1 upper, -1 lower), pushed out by eps * chord.
+  function foilPt(s, u, side, camber, flip, eps = 0) {
+    const ca = rad(s.cant || 0), td = [0, -Math.sin(ca) * (flip ? -1 : 1), Math.cos(ca)];
+    const v = side * (foilHalf(u, s.t) + eps) + camber * 4 * u * (1 - u);
+    return [s.x - u * s.c, (flip ? -s.y : s.y) + td[1] * v * s.c, s.z + td[2] * v * s.c];
+  }
+  // Interpolated station at fraction f between stations a and b.
+  const stLerp = (a, b, f) => ({ x: lerp(a.x, b.x, f), y: lerp(a.y, b.y, f), z: lerp(a.z, b.z, f), c: lerp(a.c, b.c, f), t: lerp(a.t, b.t, f), cant: lerp(a.cant || 0, b.cant || 0, f) });
 
   // ---------------------------------------------------------------------------------
   // Type data
@@ -256,6 +281,46 @@
   // Visual spin rates (revolutions per second). Real rates would strobe at screen refresh rates.
   const SPIN = { rotor: 1.6, tail: 6, prop: 3.2, fen: 7 };
 
+  // Per-type measurements (meters) that override the family proportions.
+  // fd: fuselage width. fh: fuselage height / width. nac: nacelle outer radius. nl: nacelle length.
+  // ws: windshield panes per side (2 on 787 and A350). mask: dark A350 window surround. chev: nozzle chevrons.
+  // mg: main gear [wheels per axle, axle rows]. cg: center gear [wheels per axle, rows]. doors: passenger doors per side.
+  const SPEC = {};
+  const spec = (o, list) => list.split(",").forEach(c => { SPEC[c.trim()] = Object.assign(SPEC[c.trim()] || {}, o); });
+  spec({ fd: 3.95, nac: 1.08, nl: 4.4, doors: 2, ovw: 2 }, "A318,A319,A320,A321,A20");
+  spec({ fd: 3.95, nac: 1.25, nl: 5.0, doors: 2, ovw: 2 }, "A19N,A20N,A21N");
+  spec({ doors: 3 }, "A321,A21N");
+  spec({ fd: 3.76, nac: 1.0, nl: 4.0, doors: 2, ovw: 2 }, "B736,B737,B738,B739");
+  spec({ fd: 3.76, nac: 1.1, nl: 4.6, doors: 2, ovw: 2, chev: true }, "B37M,B38M,B39M,B3XM");
+  spec({ fd: 3.76, nac: 1.2, nl: 5.0, doors: 3, ovw: 1 }, "B752,B753");
+  spec({ fd: 3.7, nac: 1.1, nl: 4.4, doors: 2, ovw: 1 }, "BCS1,BCS3,A221,A223");
+  spec({ fd: 5.03, nac: 1.4, nl: 5.5, doors: 3, ovw: 1 }, "B762,B763,B764,KC46");
+  spec({ fd: 6.19, nac: 1.85, nl: 6.5, doors: 4, mg: [2, 3] }, "B772,B773");
+  spec({ fd: 6.19, nac: 2.05, nl: 7.3, doors: 5, mg: [2, 3] }, "B77L,B77W");
+  spec({ fd: 6.2, nac: 2.15, nl: 7.6, doors: 5, mg: [2, 3], chev: false }, "B778,B779");
+  spec({ fd: 5.77, nac: 1.75, nl: 6.4, doors: 4, ws: 2, chev: true }, "B788,B789,B78X");
+  spec({ fd: 5.64, nac: 1.55, nl: 5.6, doors: 4 }, "A332,A333,A306,A30B,A310");
+  spec({ fd: 5.64, nac: 1.75, nl: 6.0, doors: 4 }, "A338,A339");
+  spec({ fd: 5.64, nac: 1.1, nl: 4.8, doors: 4, cg: [2, 1] }, "A343");
+  spec({ fd: 5.64, nac: 1.5, nl: 5.6, doors: 5, cg: [2, 2] }, "A346");
+  spec({ fd: 5.96, nac: 1.9, nl: 6.7, doors: 4, ws: 2, mask: true }, "A359");
+  spec({ fd: 5.96, nac: 1.95, nl: 6.9, doors: 4, ws: 2, mask: true, mg: [2, 3] }, "A35K");
+  spec({ fd: 7.14, fh: 1.18, nac: 1.85, nl: 6.8, doors: 5, cg: [2, 3] }, "A388");
+  spec({ fd: 6.5, nac: 1.5, nl: 5.6, doors: 5 }, "B744,B74S");
+  spec({ fd: 6.5, nac: 1.65, nl: 6.0, doors: 5, chev: true }, "B748");
+  spec({ fd: 6.02, nac: 1.45, nl: 5.5, doors: 4, cg: [2, 1] }, "MD11,DC10,L101");
+  spec({ fd: 3.01, nac: .8, nl: 3.3, doors: 2 }, "E170,E75L,E75S,E190,E195");
+  spec({ fd: 3.01, nac: 1.05, nl: 4.0, doors: 2 }, "E290,E295");
+  spec({ fd: 3.46, nac: .9, nl: 3.6, doors: 2 }, "SU95");
+  spec({ fd: 2.69, nac: .7, nl: 3.5, doors: 1, ovw: 1 }, "CRJ1,CRJ2,CRJ7,CRJ9,CRJX");
+  spec({ fd: 2.28, nac: .62, nl: 3.0, doors: 1 }, "E135,E145,E35L");
+  spec({ fd: 3.35, nac: .7, nl: 4.6, doors: 2, ovw: 1 }, "B712,MD81,MD82,MD83,MD87,MD88,MD90,DC93");
+  spec({ fd: 3.3, nac: .75, nl: 4.2, doors: 2 }, "F100,F70");
+  spec({ fd: 2.87, doors: 2 }, "AT43,AT45,AT72,AT75,AT76");
+  spec({ fd: 2.69, doors: 2 }, "DH8A,DH8B,DH8C,DH8D");
+  spec({ fd: 4.3, doors: 1 }, "C130,C30J");
+  spec({ fd: 6.85, doors: 1 }, "C17");
+
   // ---------------------------------------------------------------------------------
   // Parts
   // ---------------------------------------------------------------------------------
@@ -297,8 +362,17 @@
   }
 
   // Turbofan nacelle, intake at x0, length len, radius r, centered on (y, z).
-  function turbofan(B, x0, y, z, r, len, livery) {
+  function turbofan(B, x0, y, z, r, len, livery, chev) {
     const c = [x0, y, z], ax = [1, 0, 0];
+    if (chev) { // sawtooth chevrons on the fan nozzle (787, 747-8, 737 MAX)
+      const N = 14, xr = x0 - .92 * len;
+      for (let k = 0; k < N; k++) {
+        const ang = t => [Math.cos(t), Math.sin(t)], a0 = 2 * Math.PI * (k - .5) / N, a1 = 2 * Math.PI * (k + .5) / N, am = 2 * Math.PI * k / N;
+        const P = (t, rr, x) => { const [cy, sz] = ang(t); return [x, y + cy * rr, z + sz * rr]; };
+        const nrm = t => { const [cy, sz] = ang(t); return norm([.15, cy, sz]); };
+        B.tri("engine", P(a0, .745 * r, xr + .001), P(a1, .745 * r, xr + .001), P(am, .69 * r, xr - .07 * len), nrm(a0), nrm(a1), nrm(am));
+      }
+    }
     // Inner duct from the fan face forward, around the lip, then the outer skin to the nozzle.
     B.lathe("metal", c, ax, [[-.1 * len, .8 * r], [-.02 * len, .82 * r], [.004 * len, .86 * r], [0, .91 * r], [-.012 * len, .97 * r]], 22);
     B.lathe(livery ? "livery" : "engine", c, ax, [[-.012 * len, .97 * r], [-.07 * len, r], [-.4 * len, .99 * r], [-.75 * len, .88 * r], [-.92 * len, .74 * r]], 22);
@@ -350,9 +424,10 @@
   // ---------------------------------------------------------------------------------
   // Fixed-wing aircraft
   // ---------------------------------------------------------------------------------
-  function buildPlane(B, fam, L, b, code, gearDown) {
-    const F = FAM[fam], ft = FEAT[code] || {}, D = F.d * L, R = D / 2, ga = F.fus === "ga";
-    const ey = ga ? .9 : 1, ez = ga ? 1.1 : (ft.dd ? 1.17 : 1.04);
+  function buildPlane(B, fam, L, b, code, gearDown, gearPart) {
+    const F = FAM[fam], ft = FEAT[code] || {}, S = SPEC[code] || {}, D = S.fd || F.d * L, R = D / 2, ga = F.fus === "ga";
+    const ey = ga ? .9 : 1, ez = ga ? 1.1 : (S.fh || (ft.dd ? 1.17 : 1.04)), hq = B.hq, q = B.q;
+    const seamW = Math.max(.025, .0011 * b);
     const livery = "livery";
 
     // --- Fuselage ---
@@ -364,14 +439,14 @@
     } else {
       const Ln = 2.3 * R, Lt = 3.5 * R;
       secs = [];
-      for (let i = 0; i <= 12; i++) {
-        const s = i / 12, sx = Math.pow(s, 1.6), f = Math.max(.025, Math.pow(1 - Math.pow(1 - sx, 2.6), .55));
+      for (let i = 0, n = 12 * q; i <= n; i++) {
+        const s = i / n, sx = Math.pow(s, 1.6), f = Math.max(.025, Math.pow(1 - Math.pow(1 - sx, 2.6), .55));
         secs.push({ x: L / 2 - sx * Ln, ry: f * R * ey, rz: f * R * ez, zc: -.24 * R * Math.pow(1 - sx, 2.4) });
       }
       cabin0 = L / 2 - Ln; cabin1 = -L / 2 + Lt;
       secs.push({ x: (cabin0 + cabin1) / 2, ry: R * ey, rz: R * ez, zc: 0 });
-      for (let i = 0; i <= 12; i++) {
-        const s = i / 12, g = 1 - .87 * Math.pow(s, 1.7);
+      for (let i = 0, n = 12 * q; i <= n; i++) {
+        const s = i / n, g = 1 - .87 * Math.pow(s, 1.7);
         secs.push({ x: cabin1 - s * Lt, ry: g * R * ey, rz: g * R * ez * (1 - .12 * s), zc: .58 * R * Math.pow(s, 1.35) });
       }
     }
@@ -393,9 +468,10 @@
       B.loft("glass", band(L / 2 - .3 * L, L / 2 - .47 * L, rad(-4), rad(42)), 6, rad(-4), rad(42));
       B.loft("glass", band(L / 2 - .3 * L, L / 2 - .47 * L, rad(138), rad(184)), 6, rad(138), rad(184));
     } else {
+      if (S.mask) B.loft("dark", band(L / 2 - .5 * R, L / 2 - 1.3 * R, 0, 0, 1.006), 12, rad(12), rad(168));
       B.loft("glass", band(L / 2 - .62 * R, L / 2 - 1.12 * R, 0, 0, 1.01), 12, rad(22), rad(158));
       // Window frame posts: thin body-colored strips break the band into panes.
-      for (const a of [40, 64, 90, 116, 140]) {
+      for (const a of S.ws === 2 ? [52, 90, 128] : [40, 64, 90, 116, 140]) {
         const ar = rad(a), ss = band(L / 2 - .6 * R, L / 2 - 1.14 * R, 0, 0, 1.02);
         B.loft("body", ss, 1, ar - rad(1.6), ar + rad(1.6));
       }
@@ -416,8 +492,14 @@
       windows(B, { x0: xa, x1: xb, ry: R * ey, rz: R * ez, zc: 0, th: Math.asin(Math.min(.5, (ft.dd ? -.2 : .2) / ez)), pitch, w: Math.min(w, .06 * R * 4), h: Math.min(h, .08 * R * 4) });
       if (ft.dd) windows(B, { x0: xa - .5, x1: xb + 2, ry: R * ey, rz: R * ez, zc: 0, th: Math.asin(.42), pitch, w, h });
       // Doors: forward and aft outlines on both sides.
-      const dW = biz ? .8 : 1.0, dH = biz ? 1.5 : 1.9;
-      for (const xd of biz ? [cabin0 - .25 * R] : [cabin0 - .3 * R, cabin1 + .3 * R + dW]) door(B, xd, dW, dH, R * ey, R * ez);
+      const dW = biz ? .8 : 1.0, dH = biz ? 1.5 : 1.9, nd = biz ? 1 : (S.doors || 2);
+      const xd0 = cabin0 - .3 * R, xd1 = cabin1 + .3 * R + dW;
+      for (let k = 0; k < nd; k++) door(B, nd === 1 ? xd0 : lerp(xd0, xd1, k / (nd - 1)), dW, dH, R * ey, R * ez);
+      if (hq && !biz) {
+        const xWc = F.wx * L + F.cr * b * .5 - .45 * F.cr * b;
+        for (let k = 0; k < (S.ovw || 0); k++) door(B, xWc + (k - ((S.ovw || 0) - 1) / 2) * 1.1 + .25, .5, .95, R * ey, R * ez); // overwing exits
+        if (R > 1.3) for (const xc of [cabin0 - 1.6 * R, cabin1 + 2.2 * R]) door(B, xc, Math.min(3, 1.4 * R), Math.min(1.8, .8 * R), R * ey, R * ez, rad(-40), [-1]); // cargo doors, right side
+      }
     }
 
     // --- Wing ---
@@ -428,7 +510,32 @@
     const wing = { xLE: xW, y0, z0: zW, cr, ct, semi, sweep: F.sweep, dih: F.dih, kink: jet && !ga && fam !== "bizjet" && fam !== "bizjet3" ? .32 : 0, tR, tT };
     let wst = wingStations(wing);
     const extra = tipK && tipK !== "fence" ? tipStations(wst[wst.length - 1], tipK, b) : [];
-    B.foil("body", wst.concat(extra), { mirror: true, camber: .012, n: 10 });
+    if (hq && extra.length && tipK !== "raked") {
+      B.foil("body", wst, { mirror: true, camber: .012, n: 10 });
+      B.foil(livery, [wst[wst.length - 1], ...extra], { mirror: true, camber: .012, n: 10 }); // painted winglets
+    } else B.foil("body", wst.concat(extra), { mirror: true, camber: .012, n: 10 });
+    // Station at a fraction of the semi-span (main wing only).
+    const stAt = f => {
+      const y = y0 + f * semi;
+      for (let k = 0; k < wst.length - 1; k++) if (y >= wst[k].y - 1e-6 && y <= wst[k + 1].y + 1e-6) return stLerp(wst[k], wst[k + 1], (y - wst[k].y) / ((wst[k + 1].y - wst[k].y) || 1));
+      return wst[wst.length - 1];
+    };
+    if (hq) {
+      // Control surface outlines: flaps, ailerons, spoilers and slats.
+      const line = (f0, f1, u0, u1, side = 1) => { for (const fl of [false, true]) B.seam(stAt(f0), stAt(f1), u0, u1, side, seamW, .012, fl); };
+      const ail0 = jet ? .72 : .66, flapU = jet ? .74 : .72;
+      line(.04, ail0 - .02, flapU, flapU); line(ail0, .97, .76, .76); line(.04, .04, flapU, .99);
+      line(ail0 - .02, ail0 - .02, flapU, .99); line(ail0, ail0, .76, .99); line(.97, .97, .76, .99);
+      line(.04, ail0 - .02, flapU, flapU, -1); line(ail0, .97, .76, .76, -1);
+      if (jet && !ga) {
+        line(.16, .96, .1, .1); line(.32, .68, .6, .6);
+        for (let k = 0; k <= 4; k++) { const f = lerp(.32, .68, k / 4); line(f, f, .6, flapU); }
+      }
+      // Navigation lights: red on the left wingtip, green on the right, white tail, red beacons.
+      const tip = wst[wst.length - 1], lr = Math.max(.07, .0035 * b), tp = [tip.x - .3 * tip.c, tip.y + lr * .6, tip.z];
+      B.light("navR", tp, lr); B.light("navG", mirrorY(tp), lr);
+      B.light("strobe", [tip.x - .75 * tip.c, tip.y + lr * .5, tip.z], lr * .8); B.light("strobe", mirrorY([tip.x - .75 * tip.c, tip.y + lr * .5, tip.z]), lr * .8);
+    }
     if (tipK === "fence") {
       const s = wst[wst.length - 1], h = .022 * b;
       B.foil("body", [{ x: s.x + .1 * s.c, y: s.y + .02, z: s.z - .45 * h, c: s.c * .9, t: .08, cant: 90 }, { x: s.x - .05 * s.c, y: s.y + .02, z: s.z + h, c: s.c * .55, t: .08, cant: 90 }], { mirror: true });
@@ -478,11 +585,29 @@
       B.foil("body", [{ x: hx, y: hy0, z: hz, c: hcr, t: .09 }, { x: hx - (hb / 2 - hy0) * Math.tan(rad(hsw)), y: hb / 2, z: hz + (hb / 2) * Math.tan(rad(ga ? 0 : 6)), c: hcr * .4, t: .08 }], { mirror: true, n: 8 });
     }
 
+    if (hq) {
+      const f0 = { x: finX, y: 0, z: finZ, c: fcr, t: .1, cant: 90 }, f1 = { x: xT, y: 0, z: zTop, c: fct, t: .1, cant: 90 };
+      for (const sd of [1, -1]) B.seam(stLerp(f0, f1, .04), stLerp(f0, f1, .92), .66, .66, sd, seamW);
+      const last = secs[secs.length - 1], lr = Math.max(.07, .0035 * b);
+      if (!ga) {
+        B.disc("dark", [last.x - .005, 0, last.zc], Math.max(last.ry, .08) * .9, [1, 0, 0], 12, -1); // APU exhaust
+        B.light("navW", [last.x - lr * 1.2, 0, last.zc + Math.max(last.rz, .1) + lr], lr);
+      } else B.light("navW", [xT - fct * .9, 0, zTop - .1], lr);
+      const xb = F.wx * L + F.cr * b * .2;
+      B.light("beacon", [xb, 0, R * ez + lr * .6], lr * 1.2); B.light("beacon", [xb, 0, -R * ez - lr * .6], lr * 1.2);
+      // Antennas on the crown and belly, pitot probes by the nose.
+      const ant = (x, up) => B.foil("metal", [{ x, y: 0, z: up * R * ez * .98, c: .5 * Math.min(1, R / 1.8), t: .14, cant: 90 * up },
+        { x: x - .3 * Math.min(1, R / 1.8), y: 0, z: up * (R * ez + .32 * Math.min(1, R / 1.8)), c: .22 * Math.min(1, R / 1.8), t: .12, cant: 90 * up }], { n: 5 });
+      if (!ga) { ant(cabin0 - .6 * R, 1); ant(xb - 2 * R, 1); ant(xb + 1.5 * R, -1); }
+      const nose = secAt(L / 2 - .9 * R);
+      if (!ga) for (const sd of [1, -1]) B.tube("metal", [L / 2 - .9 * R, sd * nose.ry * .92, nose.zc - nose.rz * .35], [L / 2 - .9 * R + .2 * Math.min(1, R / 1.8), sd * (nose.ry * .92 + .12), nose.zc - nose.rz * .35], .018, 6);
+    }
+
     // --- Engines ---
     const E = F.eng;
     if (E.mount === "wing" || E.mount === "tri" || E.mount === "propwing") {
       const prop = E.mount === "propwing";
-      const r = (prop ? E.r * D * .9 : E.r * D), len = E.len * L;
+      const r = S.nac || (prop ? E.r * D * .9 : E.r * D), len = S.nl || E.len * L;
       const fr = E.n === 4 ? [.3, .56] : prop ? [ga ? .3 : .33] : [.34];
       for (const f of fr) for (const s of [1, -1]) {
         const y = f * b / 2, w = wingAt(y);
@@ -494,7 +619,7 @@
           propeller(B, [x0 + r * .3, y * s, zc], F.prop * b, BLADES[code] || F.blades, s);
         } else {
           const zc = w.z - r * 1.15, x0 = w.x + len * .45;
-          turbofan(B, x0, y * s, zc, r, len);
+          turbofan(B, x0, y * s, zc, r, len, false, hq && S.chev);
           // Pylon
           B.foil("engine", [{ x: x0 - .2 * len, y: y * s, z: zc + .55 * r, c: .95 * len, t: Math.min(.3, .22 * r / len) }, { x: w.x + .05 * w.c, y: y * s, z: w.z, c: .75 * w.c, t: Math.min(.25, .2 * r / w.c) }],
             { n: 6 });
@@ -505,7 +630,7 @@
         turbofan(B, x0, 0, zc, r, len);
       }
     } else if (E.mount === "rear" || E.mount === "rear3") {
-      const r = E.r * D, len = E.len * L, xc = -L / 2 + .27 * L, x0 = xc + len / 2, yy = R * .95 + r * 1.05, zc = .3 * R;
+      const r = S.nac || E.r * D, len = S.nl ? S.nl / .85 : E.len * L, xc = -L / 2 + .27 * L, x0 = xc + len / 2, yy = R * .95 + r * 1.05, zc = .3 * R;
       for (const s of [1, -1]) {
         turbofan(B, x0, yy * s, zc, r, len * .85);
         B.foil("engine", [{ x: xc + .2 * len, y: R * .5 * s, z: zc, c: .55 * len, t: .14 }, { x: xc + .1 * len, y: (yy - r * .6) * s, z: zc, c: .45 * len, t: .14 }], { n: 6 });
@@ -517,11 +642,12 @@
     }
 
     // --- Landing gear ---
-    const fixed = FIXED.has(code), gear = gearDown || fixed;
+    const fixed = FIXED.has(code), gear = gearDown || fixed || gearPart;
     if (gear) {
+      if (gearPart && !fixed) B.use("gear");
       const G = F.gear, wr = Math.max(.18, G.wr * R), zG = -R * ez - G.h * R * 2 * .5;
       const xm = ga ? (TAILDRAG.has(code) ? xW + .1 * cr : xW - .75 * cr) : xW - .62 * cr, ym = G.track * R;
-      const n = ga || fam === "turboprop4" ? 1 : 2, rows = G.bogie;
+      const n = ga || fam === "turboprop4" ? 1 : 2, rows = S.mg ? S.mg[1] : G.bogie;
       if (ga) {
         for (const s of [1, -1]) {
           B.tube("metal", [xm, .55 * R * s, -.75 * R * ez], [xm - .05 * cr, ym * s, zG + wr], .05);
@@ -531,12 +657,21 @@
         else { const xn = L / 2 - .06 * L; B.tube("metal", [xn, 0, -.6 * R], [xn, 0, zG + wr * .85], .05); wheel(B, [xn, 0, zG + wr * .85], wr * .85, wr * .6); }
       } else {
         const wy = ym > 1.2 * R ? zW : -.6 * R * ez;
-        for (const s of [1, -1]) gearLeg(B, xm, ym * s, wy, zG, wr, n, rows);
+        for (const s of [1, -1]) {
+          gearLeg(B, xm, ym * s, wy, zG, wr, S.mg ? S.mg[0] : n, rows);
+          if (hq) { // gear door beside the strut
+            const dz0 = wy - .1, dz1 = zG + wr * 2.4, yd = ym * s + s * (wr * .9 + .08);
+            B.hexa("body", [[xm + wr * .9, yd, dz0], [xm - wr * .9, yd, dz0], [xm - wr * .9, yd, dz1], [xm + wr * .9, yd, dz1],
+              [xm + wr * .9, yd + s * .04, dz0], [xm - wr * .9, yd + s * .04, dz0], [xm - wr * .9, yd + s * .04, dz1], [xm + wr * .9, yd + s * .04, dz1]]);
+          }
+        }
+        if (S.cg) gearLeg(B, xm - .25 * cr, 0, -.7 * R, zG, wr, S.cg[0], S.cg[1]);
         if (G.body) for (const s of [1, -1]) gearLeg(B, xm - .9 * cr * .5, .6 * R * s, -.7 * R, zG, wr, 2, 2);
         const xn = L / 2 - (fam === "bizjet" || fam === "bizjet3" ? .14 : .1) * L;
         gearLeg(B, xn, 0, -.6 * R * ez, zG, wr * .85, 2, 1);
       }
-      B.lift = -zG;
+      if (gearPart && !fixed) B.gearLift = -zG; else B.lift = -zG;
+      B.main();
     }
     return B;
   }
@@ -554,9 +689,9 @@
       }
     }
   }
-  function door(B, x, w, h, ry, rz) {
-    const th0 = -h * .45 / rz, th1 = h * .55 / rz, f = 1.007, lw = .05;
-    for (const s of [1, -1]) {
+  function door(B, x, w, h, ry, rz, thc = 0, sides = [1, -1]) {
+    const th0 = thc - h * .45 / rz, th1 = thc + h * .55 / rz, f = 1.007, lw = .05;
+    for (const s of sides) {
       const pt = (xx, t) => [xx, s * ry * f * Math.cos(t), rz * f * Math.sin(t)];
       const ref = [x, 0, 0];
       const line = (a, b, c, d) => B.quad("seam", a, b, c, d, ref);
@@ -668,6 +803,16 @@
         wheel(B, [xw, s * 1.05 * Rp, zg + wr], wr * 1.1, wr * .75);
       }
     }
+    if (B.hq) {
+      const lr = Math.max(.06, .006 * L);
+      B.light("navR", [xhs + .01 * L, hsY / 2 + lr, zb + .06 * Rp], lr); B.light("navG", [xhs + .01 * L, -hsY / 2 - lr, zb + .06 * Rp], lr);
+      B.light("navW", [xb1 - lr, 0, zb + .1 * Rp], lr); B.light("beacon", [xm - .14 * Lb, 0, cz + .38 * Rp], lr * 1.2);
+      B.light("beacon", [xs - .3 * Lb, 0, -1.08 * Rp], lr);
+      // Cabin door outlines and exhaust stacks
+      const mid = pod[Math.floor(pod.length * .45)];
+      door(B, xs - .2 * Lb, .2 * Lb, 1.1 * Rp, mid.ry * 1.01, mid.rz * 1.01);
+      for (const sd of [1, -1]) B.lathe("dark", [xm - .17 * Lb, sd * .3 * Rp, cz + .1 * Rp], [-1, sd * .5, .2], [[0, .1 * Rp], [.12 * Lb, .1 * Rp]], 10);
+    }
     B.lift = -zg;
     return B;
   }
@@ -677,8 +822,8 @@
     for (let k = 0; k < n; k++) {
       const th = 2 * Math.PI * k / n, d = add(mul(e1, Math.cos(th)), mul(e2, Math.sin(th))), tg = cross(axis, d);
       const p = (rr, sd, up) => add(add(add(add(cen, mul(d, rr)), mul(tg, sd * c / 2)), mul(axis, up * t / 2)), mul(axis, -droop * R * (rr / R) ** 2));
-      const r0 = .1 * R;
-      B.hexa("blade", [p(r0, 1, 1), p(r0, -1, .6), p(R, -1, .6), p(R, 1, 1), p(r0, 1, -.6), p(r0, -1, -1), p(R, -1, -1), p(R, 1, -.6)]);
+      const r0 = .1 * R, seg = (mat, a, b2) => B.hexa(mat, [p(a, 1, 1), p(a, -1, .6), p(b2, -1, .6), p(b2, 1, 1), p(a, 1, -.6), p(a, -1, -1), p(b2, -1, -1), p(b2, 1, -.6)]);
+      if (B.hq) { seg("blade", r0, .93 * R); seg("tip", .93 * R, R); } else seg("blade", r0, R);
     }
   }
 
@@ -689,7 +834,9 @@
     body: { c: [.92, .93, .94, 1], m: .05, r: .45 }, engine: { c: [.62, .64, .68, 1], m: .5, r: .4 }, metal: { c: [.72, .74, .77, 1], m: .85, r: .3 },
     dark: { c: [.04, .045, .05, 1], m: .2, r: .6 }, glass: { c: [.03, .05, .08, 1], m: .6, r: .12 }, tire: { c: [.05, .05, .05, 1], m: 0, r: .85 },
     seam: { c: [.62, .64, .67, 1], m: .05, r: .6 }, blade: { c: [.13, .13, .14, 1], m: .3, r: .5 },
-    disc: { c: [.15, .15, .16, .12], blend: true }, livery: { c: null, m: .05, r: .4 },
+    disc: { c: [.15, .15, .16, .12], blend: true }, livery: { c: null, m: .05, r: .4 }, tip: { c: [.95, .8, .1, 1], m: .1, r: .5 },
+    navR: { c: [1, .1, .08, 1], e: [1, .08, .05] }, navG: { c: [.1, 1, .3, 1], e: [.05, 1, .25] }, navW: { c: [1, 1, 1, 1], e: [1, 1, 1] },
+    strobe: { c: [1, 1, 1, 1], e: [.9, .9, .95] }, beacon: { c: [1, .15, .1, 1], e: [1, .1, .05] },
   };
   const toG = v => [v[1], v[2], v[0]]; // authoring (X fwd, Y left, Z up) -> glTF (+X left, +Y up, +Z fwd)
 
@@ -707,7 +854,7 @@
     const mat = name => {
       if (name in matIndex) return matIndex[name];
       const M = MATS[name], col = M.c || livery;
-      materials.push({ name, pbrMetallicRoughness: { baseColorFactor: col, metallicFactor: M.m ?? .1, roughnessFactor: M.r ?? .55 },
+      materials.push({ name, pbrMetallicRoughness: { baseColorFactor: col, metallicFactor: M.m ?? .1, roughnessFactor: M.r ?? .55 }, ...(M.e ? { emissiveFactor: M.e } : {}),
         doubleSided: name === "disc" || name === "glass" || name === "seam" || name === "blade", ...(M.blend ? { alphaMode: "BLEND" } : {}) });
       return (matIndex[name] = materials.length - 1);
     };
@@ -746,6 +893,7 @@
     }
     const bin = new Uint8Array(offset); let o = 0;
     for (const c of chunks) { bin.set(c, o); o += c.byteLength; }
+    if (B.gearLift) nodes[0].extras = { gearLift: B.gearLift };
     const json = {
       asset: { version: "2.0", generator: "Overhead3D" }, scene: 0, scenes: [{ nodes: [0] }], nodes, meshes, materials, accessors, bufferViews,
       buffers: [{ byteLength: offset }], ...(animations.length ? { animations } : {}),
@@ -753,16 +901,19 @@
     return { json, bin };
   }
 
-  function build(fam, L, b, code, gear) {
-    const B = new Builder();
-    if (FAM[fam].fus === "heli") buildHeli(B, L, b, code); else buildPlane(B, fam, L, b, code, gear);
+  // opts: code, gear (draw retractable gear), hq (high detail), gearPart (put retractable gear in its own "gear" node).
+  function build(fam, L, b, opts = {}) {
+    const B = new Builder(!!opts.hq);
+    if (FAM[fam].fus === "heli") buildHeli(B, L, b, opts.code); else buildPlane(B, fam, L, b, opts.code, !!opts.gear, !!opts.gearPart);
     return B;
   }
   const liveryLinear = hex => [...hex.match(/\w\w/g).map(h => Math.pow(parseInt(h, 16) / 255, 2.2)), 1]; // sRGB -> linear
 
   // Binary .glb for a model (Node or browser).
   function glb(fam, L, b, liveryHex = "7f8a9c", opts = {}) {
-    const { json, bin } = toGltf(build(fam, L, b, opts.code, opts.gear), liveryLinear(liveryHex));
+    const B = build(fam, L, b, opts);
+    const { json, bin } = toGltf(B, liveryLinear(liveryHex));
+    if (opts.info) Object.assign(opts.info, { gearLift: B.gearLift || 0, lift: B.lift || 0 });
     const enc = s => new TextEncoder().encode(s);
     let js = enc(JSON.stringify(json)); const jpad = (4 - js.length % 4) % 4;
     if (jpad) { const t = new Uint8Array(js.length + jpad); t.set(js); t.fill(0x20, js.length); js = t; }
@@ -774,7 +925,7 @@
     return out;
   }
   function triangles(fam, L, b, opts = {}) {
-    const B = build(fam, L, b, opts.code, opts.gear);
+    const B = build(fam, L, b, opts);
     return B.parts.reduce((s, p) => s + Object.values(p.g).reduce((t, g) => t + g.p.length / 9, 0), 0);
   }
 
@@ -786,8 +937,20 @@
     if (!urlCache.has(key)) urlCache.set(key, URL.createObjectURL(new Blob([glb(fam, L, b, liveryHex, { code, gear })], { type: "model/gltf-binary" })));
     return urlCache.get(key);
   }
+  // Copy of a .glb with the "livery" material set to a new sRGB hex color (for baked model files).
+  function recolorGlb(buf, liveryHex) {
+    const u8 = new Uint8Array(buf), dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const jlen = dv.getUint32(12, true), json = JSON.parse(new TextDecoder().decode(u8.subarray(20, 20 + jlen)));
+    for (const m of json.materials || []) if (m.name === "livery") m.pbrMetallicRoughness.baseColorFactor = liveryLinear(liveryHex);
+    let js = new TextEncoder().encode(JSON.stringify(json)); const pad = (4 - js.length % 4) % 4;
+    if (pad) { const t = new Uint8Array(js.length + pad); t.set(js); t.fill(0x20, js.length); js = t; }
+    const rest = u8.subarray(20 + jlen), total = 20 + js.length + rest.length, out = new Uint8Array(total), ov = new DataView(out.buffer);
+    out.set(u8.subarray(0, 12)); ov.setUint32(8, total, true); ov.setUint32(12, js.length, true); ov.setUint32(16, 0x4E4F534A, true);
+    out.set(js, 20); out.set(rest, 20 + js.length);
+    return out;
+  }
   // Fixed gear and skids are always drawn; retractable gear only when asked.
   const hasFixedGear = (fam, code) => fam === "heli" || FIXED.has(code);
 
-  return { T, FAM, FEAT, HELI, CLASS_NAME, modelUrl, glb, triangles, hasFixedGear };
+  return { T, FAM, FEAT, HELI, SPEC, CLASS_NAME, modelUrl, glb, recolorGlb, triangles, hasFixedGear };
 });
